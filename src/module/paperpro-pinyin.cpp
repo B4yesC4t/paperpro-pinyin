@@ -168,8 +168,12 @@ class PinyinIme : public QObject {
     Q_OBJECT
 public:
     PinyinIme() {
-        connect(qApp, &QCoreApplication::aboutToQuit, this, [] { setGuard(0); });
+        connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
+            setGuard(0);
+            if (m_proc) m_proc->disconnect(this);  // its exit now is expected
+        });
         if (m_debug) openControl();
+        QTimer::singleShot(5000, this, [this] { launchRime(); });
     }
 
     Q_INVOKABLE void pick(int i) { rime(QStringLiteral("pick %1").arg(i)); }
@@ -439,11 +443,16 @@ private:
     }
 
     // ---- Rime --------------------------------------------------------------------------
-    bool startRime() {
-        if (m_proc && m_proc->state() == QProcess::Running) return true;
-        if (m_failures >= 3) return false;
-        delete m_proc;
+    // Rime is started in the background soon after xochitl comes up: its first
+    // start after a reboot reads ~60 MB of tables and can take several
+    // seconds, which should not land on the first key typed.
+    void launchRime() {
+        if (m_proc && m_proc->state() != QProcess::NotRunning) return;
+        if (m_retry.isValid() && m_retry.elapsed() < 10000) return;
+        m_retry.invalidate();
+        if (m_proc) m_proc->deleteLater();
         m_proc = new QProcess(this);
+        m_ready = false;
         QString rimeDir = basePath("rime");
         QDir().mkpath(basePath("user"));
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
@@ -451,25 +460,63 @@ private:
         env.insert(QStringLiteral("LD_LIBRARY_PATH"), rimeDir + QStringLiteral("/lib"));
         m_proc->setProcessEnvironment(env);
         m_proc->setProcessChannelMode(QProcess::ForwardedErrorChannel);
-        m_proc->start(rimeDir + QStringLiteral("/pinyin-rime"),
-                      {rimeDir + QStringLiteral("/shared"), basePath("user"),
-                       rimeDir + QStringLiteral("/plugins/librime-lua.so")});
-        if (!m_proc->waitForStarted(3000) || !readReply()) {
-            m_failures++;
-            logf("rime did not start (%d)", m_failures);
+        QProcess *p = m_proc;
+        connect(p, &QProcess::finished, this, [this, p](int code, QProcess::ExitStatus st) {
+            if (p != m_proc) return;
+            logf("rime exited (%s %d)", st == QProcess::CrashExit ? "crash" : "code", code);
+            rimeFailed();
+        });
+        m_launched.start();
+        p->start(rimeDir + QStringLiteral("/pinyin-rime"),
+                 {rimeDir + QStringLiteral("/shared"), basePath("user"),
+                  rimeDir + QStringLiteral("/plugins/librime-lua.so")});
+    }
+
+    // A failed or stuck Rime is not given up on: it is retried 10 s later.
+    // Meanwhile keys go through unchanged.
+    void rimeFailed() {
+        if (m_proc) {
+            QProcess *p = m_proc;
+            m_proc = nullptr;
+            p->disconnect(this);
+            p->kill();
+            p->deleteLater();
+        }
+        m_ready = false;
+        m_retry.start();
+        m_preedit.clear();
+        m_cands.clear();
+        updateBar();
+    }
+
+    bool startRime() {
+        if (m_proc && m_ready && m_proc->state() == QProcess::Running) return true;
+        launchRime();
+        if (!m_proc) return false;
+        // Its first reply means the engine is ready. Allow a cold start its
+        // time (counted from launch), once.
+        int left = 20000 - int(m_launched.elapsed());
+        if ((m_proc->state() == QProcess::Starting && !m_proc->waitForStarted(qMax(left, 1)))
+            || !readReply(qMax(left, 1))) {
+            logf("rime did not start within 20 s");
+            rimeFailed();
             return false;
         }
+        m_ready = true;
         logf("rime ready");
         return true;
     }
 
-    bool readReply() {
+    bool readReply(int timeout = 3000) {
         QElapsedTimer t;
         t.start();
-        while (!m_proc->canReadLine()) {
-            if (t.elapsed() > 3000 || !m_proc->waitForReadyRead(3000 - int(t.elapsed()))) return false;
+        QProcess *p = m_proc;
+        // (A wait can report the helper's exit, which clears m_proc.)
+        while (p == m_proc && !p->canReadLine()) {
+            if (t.elapsed() >= timeout || !p->waitForReadyRead(timeout - int(t.elapsed()))) break;
         }
-        QJsonObject r = QJsonDocument::fromJson(m_proc->readLine()).object();
+        if (!m_proc || p != m_proc || !p->canReadLine()) return false;
+        QJsonObject r = QJsonDocument::fromJson(p->readLine()).object();
         m_handled = r.value(QLatin1String("handled")).toBool();
         m_preedit = r.value(QLatin1String("preedit")).toString();
         m_ascii = r.value(QLatin1String("ascii")).toBool();
@@ -488,8 +535,7 @@ private:
         m_proc->write(req.toUtf8() + '\n');
         if (!readReply()) {
             logf("rime stopped answering");
-            m_proc->kill();
-            m_failures++;
+            rimeFailed();
             return false;
         }
         updateBar();
@@ -619,7 +665,8 @@ private:
 
     const bool m_debug = QFile::exists(basePath("debug"));
     QProcess *m_proc = nullptr;
-    int m_failures = 0;
+    bool m_ready = false;
+    QElapsedTimer m_launched, m_retry;
     bool m_handled = false, m_ascii = false, m_prev = false, m_next = false;
     bool m_committing = false, m_shiftAlone = false, m_editing = false;
     QString m_preedit;
