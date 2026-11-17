@@ -72,6 +72,7 @@ cat out/paperpro-pinyin/libpaperpro-pinyin.so | ssh root@10.11.99.1 \
 | --- | --- |
 | `echo "type wo" > ctl` | 像键盘输入一样把字母交给引擎 |
 | `echo "key 65307" > ctl` | 发送一个 keysym（例：Esc） |
+| `echo 'commit 第一行\n第二行' > ctl` | 把文字直接插入光标处（`\n` 为换行），像语音结果上屏一样 |
 | `echo dump > ctl` | 记录焦点对象、光标、图层结构与候选栏状态 |
 | `echo grab > ctl` | 把当前界面截图保存为 `/tmp/paperpro-pinyin-grab.png` |
 | `echo "prop keyboardVisibility" > ctl` | 读取焦点对象（或其上层）的属性 |

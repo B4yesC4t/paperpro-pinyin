@@ -462,7 +462,7 @@ Item {
                             onClicked: promptEdit.text = voice.defaultPrompt
                         }
                     }
-                    EditBox { id: promptEdit; lines: 5; initial: voice.prompt; onSave: (t) => voice.prompt = t }
+                    EditBox { id: promptEdit; lines: 8; initial: voice.prompt; onSave: (t) => voice.prompt = t }
                     Text { text: "热词"; font.pixelSize: 36; color: "black" }
                     Note { text: "人名、产品名等专有名词，每行一个或用逗号隔开。优化时会优先采用这里的写法。" }
                     EditBox { id: hotwordEdit; lines: 3; initial: voice.hotwords; onSave: (t) => voice.hotwords = t }

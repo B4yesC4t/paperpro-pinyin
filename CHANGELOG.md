@@ -2,6 +2,13 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-11-17
+
+### 变更
+
+- 语音输入的默认优化提示词改为“整理成笔记”：修正错字和标点，按主题分段，内容多时加小标题和列表，保留原意、口吻、确定程度和所有有效信息，不替用户下结论。改过提示词的人不受影响。
+- Flash 整理的等待时间由 15 秒放宽到 30 秒（笔记格式的输出更长）；设置页的提示词编辑框加高。
+
 ## [0.2.0] - 2026-11-17
 
 ### 新增
@@ -43,6 +50,7 @@
 - 崩溃保护：同一次开机内 xochitl 连续 3 次异常退出时自动停用。
 - 安装、卸载脚本，安装时自检引擎。
 
+[0.2.1]: https://github.com/B4yesC4t/paperpro-pinyin/releases/tag/v0.2.1
 [0.2.0]: https://github.com/B4yesC4t/paperpro-pinyin/releases/tag/v0.2.0
 [0.1.1]: https://github.com/B4yesC4t/paperpro-pinyin/releases/tag/v0.1.1
 [0.1.0]: https://github.com/B4yesC4t/paperpro-pinyin/releases/tag/v0.1.0

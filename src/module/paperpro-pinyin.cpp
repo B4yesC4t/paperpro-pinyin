@@ -283,7 +283,10 @@ private:
     }
 
     void control(const QString &cmd) {
-        if (cmd.startsWith(QLatin1String("type "))) {
+        if (cmd.startsWith(QLatin1String("commit "))) {
+            // commit <text>：直接上屏，\\n 表示换行（用来试语音整理后的多行结果）。
+            commit(cmd.mid(7).replace(QLatin1String("\\n"), QLatin1String("\n")));
+        } else if (cmd.startsWith(QLatin1String("type "))) {
             for (QChar c : cmd.mid(5)) rime(QStringLiteral("key %1 0").arg(c.unicode()));
         } else if (cmd.startsWith(QLatin1String("key "))) {
             rime(QStringLiteral("key %1 0").arg(cmd.mid(4).toInt(nullptr, 0)));
