@@ -84,6 +84,28 @@ public:
         QString k = key();
         return k.size() > 8 ? QStringLiteral("sk-…") + k.right(4) : QString();
     }
+    // 设置页保存 Key：只存在平板上（仅 root 可读），不会进入安装包或仓库。
+    // 返回错误说明；成功时返回空字符串。空 Key 表示清除。
+    Q_INVOKABLE QString setKey(const QString &value) {
+        QString k = value.trimmed();
+        if (k.isEmpty()) {
+            QFile::remove(keyPath());
+            emit changed();
+            return QString();
+        }
+        if (k.contains(QRegularExpression(QStringLiteral("\\s"))) || k.size() < 20)
+            return QStringLiteral("这不像是 DeepSeek 的 API Key（应以 sk- 开头，中间没有空格）");
+        QDir().mkpath(basePath("user"));
+        QFile f(keyPath());
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return QStringLiteral("无法保存：%1").arg(f.errorString());
+        f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        f.write(k.toUtf8());
+        f.close();
+        m_testState = QStringLiteral("idle");
+        m_testMessage.clear();
+        emit changed();
+        return QString();
+    }
     QString testState() const { return m_testState; }
     QString testMessage() const { return m_testMessage; }
 

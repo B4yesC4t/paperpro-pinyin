@@ -26,9 +26,15 @@ make package    # 打包为 dist/paperpro-pinyin.tar.gz 及 .sha256
 ## 目录结构
 
 ```
-src/module/paperpro-pinyin.cpp   注入 xochitl 的 Qt 模块：事件过滤、候选栏、光标定位、键盘布局
+src/module/paperpro-pinyin.cpp   注入 xochitl 的 Qt 模块：事件过滤、候选栏、光标定位、键盘布局与按键
+src/module/overlay.qml           候选栏、语音状态、设置页（构建时编为字符串常量）
+src/module/bluetooth.h           蓝牙：通过 D-Bus 控制 bluetoothd（开关、搜索、配对）
+src/module/voice.h               语音输入：录音子进程、DeepSeek 识别与 Flash 整理
 src/loader/paperpro-pinyin-loader.c  预加载的加载器：等 /home 就绪后打开模块
 src/helper/pinyin-rime.c         librime 的按行协议包装（子进程）
+src/helper/voice-hfp.c           蓝牙免提麦克风录音：用户态 RFCOMM + HFP 音频网关 + SCO
+device/bluetooth-up.sh           载入蓝牙驱动、启动 bluetoothd
+assets/paperpro-pinyin-icons.ttf 屏幕键盘图标（Material Icons 子集）
 device/install.sh                在平板上安装
 device/uninstall.sh              在平板上卸载
 device/mirror-root.sh            系统更新后同步配置到新分区
@@ -70,8 +76,22 @@ cat out/paperpro-pinyin/libpaperpro-pinyin.so | ssh root@10.11.99.1 \
 | `echo grab > ctl` | 把当前界面截图保存为 `/tmp/paperpro-pinyin-grab.png` |
 | `echo "prop keyboardVisibility" > ctl` | 读取焦点对象（或其上层）的属性 |
 | `echo "call showVirtualKeyboard" > ctl` | 调用焦点对象（或其上层）的方法 |
+| `echo settings > ctl` / `echo "settings off" > ctl` | 打开 / 关闭设置页 |
+| `echo "bt on" > ctl` / `bt off` / `bt scan` | 蓝牙开关、搜索 |
+| `echo "voice test" > ctl` / `echo state > ctl` | DeepSeek 连接测试；蓝牙与语音状态 |
+| `echo "tree <类名正则> [深度]" > ctl` | 列出界面元素及其子元素（找 xochitl 的界面结构） |
+| `echo "methods <正则>" > ctl` | 列出名字匹配的方法与属性 |
+| `echo "probe import QtQuick; …" > ctl` | 在 xochitl 的 QML 引擎里创建对象，列出其属性与枚举 |
+| `echo modes > ctl` / `echo "fastmode <n>" > ctl` | 列出墨水屏刷新区域；切换候选栏的刷新方式 |
+| `echo "res <路径>" > ctl` | 把资源文件（如 `:/misc/keyboards/…`）复制到 `/tmp/paperpro-pinyin-res` |
 
 调试模式会记录按键内容，用完请删除 `debug` 文件并重启 xochitl。
+
+单独测试蓝牙麦克风录音（录 5 秒，输出 8 kHz 16 位单声道 PCM）：
+
+```sh
+sleep 30 | /home/root/paperpro-pinyin/voice-hfp <麦克风地址> <RFCOMM 通道> 5 > /tmp/v.pcm
+```
 
 ## 发布
 

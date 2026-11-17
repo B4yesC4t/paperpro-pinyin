@@ -582,6 +582,16 @@ private:
     }
 
     // ---- the focused editor ------------------------------------------------------
+    // Fields for passwords, keys and the like (API Key on the settings page):
+    // the input method stays out of them.
+    static bool latinOnly(QObject *fo) {
+        if (!fo) return false;
+        QInputMethodQueryEvent q(Qt::ImHints);
+        QCoreApplication::sendEvent(fo, &q);
+        int h = q.value(Qt::ImHints).toInt();
+        return h & (Qt::ImhLatinOnly | Qt::ImhSensitiveData | Qt::ImhHiddenText);
+    }
+
     static bool editable(QObject *fo) {
         if (!fo) return false;
         QInputMethodQueryEvent q(Qt::ImEnabled);
@@ -616,7 +626,7 @@ private:
             m_swallowRelease.insert(k->key());
             return true;
         }
-        if (m_replaying) return false;
+        if (m_replaying || latinOnly(QGuiApplication::focusObject())) return false;
         // Holding Space talks: past kSpaceHold it records until Space is let go,
         // then the speech is recognized and put at the cursor. A shorter press
         // is an ordinary space, sent on release.
@@ -704,7 +714,9 @@ private:
     // empty commit replacing the character before the cursor), sent to the
     // editor as input method events.
     bool inputMethod(QInputMethodEvent *im) {
-        if (!editable(QGuiApplication::focusObject()) || !im->preeditString().isEmpty()) return false;
+        if (!editable(QGuiApplication::focusObject()) || !im->preeditString().isEmpty() ||
+            latinOnly(QGuiApplication::focusObject()))
+            return false;
         const QString c = im->commitString();
         if (m_dropSpace && c == QLatin1String(" ")) {  // the space key that was held to talk
             m_dropSpace = false;

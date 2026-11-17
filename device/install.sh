@@ -51,7 +51,7 @@ if [ "$SRC" != "$DEST" ]; then
     rm -rf "$DEST.old"
 fi
 mkdir -p "$DEST/user"
-chmod +x "$DEST/rime/pinyin-rime" "$DEST"/*.sh
+chmod +x "$DEST/rime/pinyin-rime" "$DEST/voice-hfp" "$DEST"/*.sh
 
 # ---- 自检 ----------------------------------------------------------------------
 say "==> 自检 Rime 引擎"
@@ -109,7 +109,9 @@ sleep 5
 if journalctl -u xochitl --since "-20s" -o cat --no-pager | grep -q "\[paperpro-pinyin\] loaded"; then
     say ""
     say "安装完成。打开笔记本进入文字模式即可输入中文："
-    say "  单击 Shift 或 Ctrl+空格 切换中/英；数字键或点击选字，空格上屏第一个候选。"
+    say "  外接键盘单击 Shift 或 Ctrl+空格、屏幕键盘点「中/英」切换中英；数字键或点击选字。"
+    say "  语音输入：在屏幕键盘上点 ⚙ 打开设置，打开蓝牙、配对麦克风、填写 DeepSeek API Key，"
+    say "  之后按住空格说话即可（详见 docs/voice.md）。"
 else
     say "已安装，但还没在日志里看到模块加载。可运行：journalctl -u xochitl | grep paperpro-pinyin"
 fi

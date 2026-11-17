@@ -208,6 +208,8 @@ Item {
         property int lines: 3
         property string initial
         property alias text: edit.text
+        property int hints: 0          // 例如 API Key：敏感、只用拉丁字母（拼音输入法会让开）
+        property bool autoSave: true
         signal save(string text)
         width: parent ? parent.width : 0
         height: lines * 44 + 32
@@ -221,11 +223,12 @@ Item {
             TextEdit {
                 id: edit
                 width: ef.width
-                wrapMode: TextEdit.Wrap
+                wrapMode: TextEdit.WrapAnywhere
                 font.pixelSize: 32; color: "black"
                 selectByMouse: false
+                inputMethodHints: eb.hints
                 Component.onCompleted: text = eb.initial
-                onTextChanged: saveTimer.restart()
+                onTextChanged: if (eb.autoSave) saveTimer.restart()
                 onCursorRectangleChanged: {
                     if (cursorRectangle.y < ef.contentY) ef.contentY = cursorRectangle.y
                     else if (cursorRectangle.y + cursorRectangle.height > ef.contentY + ef.height)
@@ -362,21 +365,62 @@ Item {
                 // 语音识别
                 Heading { text: "语音识别（DeepSeek）" }
                 Item {
+                    id: keyRow
+                    property bool editing: false
+                    property string error: ""
                     width: parent.width; height: 96
                     Column {
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 4
                         Text { text: "API Key"; font.pixelSize: 40; color: "black" }
                         Text {
-                            text: voice.keyHint.length > 0 ? "已设置（" + voice.keyHint + "）" : "未设置"
+                            text: voice.keyHint.length > 0 ? "已设置（" + voice.keyHint + "），只保存在这台平板上"
+                                                           : "未设置：在 platform.deepseek.com 创建后填入"
                             font.pixelSize: 28; color: "#444444"
                         }
                     }
-                    Button {
+                    Row {
                         anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                        label: voice.testState === "testing" ? "测试中…" : "测试连接"
-                        enabled: voice.testState !== "testing"
-                        onClicked: voice.testKey()
+                        spacing: 16
+                        visible: !keyRow.editing
+                        Button {
+                            label: voice.keyHint.length > 0 ? "修改" : "填写"
+                            onClicked: { keyRow.error = ""; keyEdit.text = ""; keyRow.editing = true }
+                        }
+                        Button {
+                            visible: voice.keyHint.length > 0
+                            label: voice.testState === "testing" ? "测试中…" : "测试连接"
+                            enabled: voice.testState !== "testing"
+                            onClicked: voice.testKey()
+                        }
+                    }
+                }
+                Column {
+                    visible: keyRow.editing
+                    width: parent.width
+                    spacing: 16
+                    EditBox {
+                        id: keyEdit
+                        lines: 2; autoSave: false
+                        hints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase | Qt.ImhLatinOnly
+                    }
+                    Note { visible: keyRow.error.length > 0; text: keyRow.error; color: "black" }
+                    Row {
+                        spacing: 16
+                        Button {
+                            label: "保存"; primary: true
+                            onClicked: {
+                                var err = voice.setKey(keyEdit.text)
+                                keyRow.error = err
+                                if (err.length === 0) { keyRow.editing = false; keyEdit.text = ""; voice.testKey() }
+                            }
+                        }
+                        Button { label: "取消"; onClicked: { keyRow.editing = false; keyEdit.text = "" } }
+                        Button {
+                            visible: voice.keyHint.length > 0
+                            label: "清除 Key"
+                            onClicked: { voice.setKey(""); keyRow.editing = false; keyEdit.text = "" }
+                        }
                     }
                 }
                 Note { visible: voice.testMessage.length > 0; text: voice.testMessage; color: "black" }
@@ -428,8 +472,8 @@ Item {
                 Heading { text: "怎样切换" }
                 Note {
                     color: "black"
-                    text: "打字：拼音与英文之间，单击 Shift 或按 Ctrl+空格。\n"
-                        + "说话：外接键盘上按住空格说话，松开即识别并整理，文字出现在光标处；屏幕键盘上按麦克风键开始，再按一次结束。Esc 取消。\n"
+                    text: "打字：拼音与英文之间，外接键盘上单击 Shift 或按 Ctrl+空格；屏幕键盘上点「中/英」。\n"
+                        + "说话：外接键盘上按住空格说话，松开即识别并整理，文字出现在光标处；屏幕键盘上同样可以长按空格，或点麦克风键开始、再点一次结束。Esc 取消。\n"
                         + "两者互不影响：语音输入完，继续打字时仍是原来的中文或英文。"
                 }
             }
