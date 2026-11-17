@@ -97,6 +97,46 @@ Item {
         }
     }
 
+    // 语音输入的状态，显示在候选栏的位置。
+    readonly property string voiceState: voice.state
+    readonly property bool voiceShown: voiceState === "recording" || voiceState === "recognizing"
+                                        || voiceState === "polishing" || voiceState === "error"
+                                        || (voiceState === "connecting" && voiceWanted)
+    property bool voiceWanted: false   // 用户按了语音键、正在等麦克风连上
+    property string voiceHint: "再按一次结束"
+    onVoiceStateChanged: if (voiceState !== "connecting") voiceWanted = false
+    property int voiceSeconds: 0
+    Timer {
+        interval: 1000; repeat: true; running: root.voiceState === "recording"
+        onRunningChanged: root.voiceSeconds = 0
+        onTriggered: root.voiceSeconds = Math.floor((Date.now() - voice.recordingSince) / 1000)
+    }
+    Rectangle {
+        id: voicePill
+        visible: root.voiceShown && !bar.visible
+        color: root.voiceState === "recording" ? "black" : "white"
+        border.color: "black"; border.width: 2; radius: 8
+        width: Math.min(root.areaW - 16, voiceText.implicitWidth + 40)
+        height: voiceText.implicitHeight + 24
+        x: root.placeX(width)
+        y: root.placeY(height)
+        FastRegion { anchors.fill: parent; mode: root.fastMode }
+        Text {
+            id: voiceText
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, root.areaW - 56)
+            wrapMode: Text.Wrap
+            font.pixelSize: 32
+            color: root.voiceState === "recording" ? "white" : "black"
+            text: root.voiceState === "recording"
+                  ? "● 正在听 " + Math.floor(root.voiceSeconds / 60) + ":" + ("0" + root.voiceSeconds % 60).slice(-2) + "　" + root.voiceHint + " · Esc 取消"
+                  : root.voiceState === "connecting" ? "正在连接麦克风…"
+                  : root.voiceState === "recognizing" ? "识别中…"
+                  : root.voiceState === "polishing" ? "整理中…"
+                  : voice.message
+        }
+    }
+
     // 中/英, shown briefly by the cursor when it changes or typing starts.
     property bool modeShown: false
     function flash() { if (editing) { modeShown = true; modeTimer.restart() } else modeShown = false }
@@ -118,8 +158,7 @@ Item {
         TapHandler { onTapped: ime.toggle() }
     }
 
-    // ---- 编辑时的工具条：中/英、语音、设置 -------------------------------------------
-    // 停在右下角（屏幕键盘弹出时在键盘上方），手指够得着，也不挡住正在写的那一行。
+    // ---- 按钮 -----------------------------------------------------------------------
     component ToolButton: Rectangle {
         id: tb
         property string label
@@ -137,17 +176,6 @@ Item {
         // MouseArea（而不是 TapHandler）：接住这次点击，不让它落到下面的笔记里。
         MouseArea { anchors.fill: parent; onClicked: tb.clicked() }
     }
-    Row {
-        id: tools
-        visible: root.editing && !root.settingsOpen
-        x: root.areaW - width - 24
-        y: root.areaH - root.bottomMargin - height - 24
-        spacing: -2
-        ToolButton { label: root.chinese ? "中" : "英"; dark: root.chinese; onClicked: ime.toggle() }
-        ToolButton { label: "语音"; onClicked: ime.voice() }
-        ToolButton { label: "设置"; onClicked: root.settingsOpen = true }
-    }
-    FastRegion { mode: root.fastMode; visible: tools.visible; x: tools.x; y: tools.y; width: tools.width; height: tools.height }
 
     // ---- 设置页 ---------------------------------------------------------------------
     component Button: Rectangle {
@@ -174,6 +202,44 @@ Item {
         Text { text: parent.text; font.pixelSize: 44; font.bold: true; color: "black" }
         Rectangle { width: parent.width; height: 3; color: "black" }
     }
+    // 多行编辑框：用拼音输入法或屏幕键盘编辑，停手 1 秒后保存。
+    component EditBox: Rectangle {
+        id: eb
+        property int lines: 3
+        property string initial
+        property alias text: edit.text
+        signal save(string text)
+        width: parent ? parent.width : 0
+        height: lines * 44 + 32
+        color: "white"; border.color: "black"; border.width: edit.activeFocus ? 3 : 2; radius: 8
+        Flickable {
+            id: ef
+            anchors.fill: parent; anchors.margins: 16
+            contentHeight: edit.paintedHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            TextEdit {
+                id: edit
+                width: ef.width
+                wrapMode: TextEdit.Wrap
+                font.pixelSize: 32; color: "black"
+                selectByMouse: false
+                Component.onCompleted: text = eb.initial
+                onTextChanged: saveTimer.restart()
+                onCursorRectangleChanged: {
+                    if (cursorRectangle.y < ef.contentY) ef.contentY = cursorRectangle.y
+                    else if (cursorRectangle.y + cursorRectangle.height > ef.contentY + ef.height)
+                        ef.contentY = cursorRectangle.y + cursorRectangle.height - ef.height
+                }
+            }
+        }
+        Timer { id: saveTimer; interval: 1000; onTriggered: eb.save(edit.text) }
+        MouseArea {
+            anchors.fill: parent
+            enabled: !edit.activeFocus
+            onClicked: { edit.forceActiveFocus(); edit.cursorPosition = edit.length; Qt.inputMethod.show() }
+        }
+    }
     component Note: Text {
         width: parent ? parent.width : 0
         wrapMode: Text.Wrap
@@ -182,6 +248,7 @@ Item {
 
     Rectangle {
         id: page
+        z: -1   // 候选栏要在设置页之上：编辑提示词时也用拼音
         visible: root.settingsOpen
         x: 0; y: 0
         width: root.areaW; height: root.areaH
@@ -313,13 +380,56 @@ Item {
                     }
                 }
                 Note { visible: voice.testMessage.length > 0; text: voice.testMessage; color: "black" }
+                Item {
+                    width: parent.width; height: 96
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - polishButton.width - 24
+                        spacing: 4
+                        Text { text: "用 Flash 优化"; font.pixelSize: 40; color: "black" }
+                        Text {
+                            width: parent.width; wrapMode: Text.Wrap
+                            text: voice.polish ? "已开启：识别后由 DeepSeek Flash 按下面的提示词整理"
+                                               : "已关闭：直接使用识别结果"
+                            font.pixelSize: 28; color: "#444444"
+                        }
+                    }
+                    Button {
+                        id: polishButton
+                        anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                        label: voice.polish ? "关闭" : "开启"
+                        onClicked: voice.polish = !voice.polish
+                    }
+                }
+
+                Column {
+                    visible: voice.polish
+                    width: parent.width
+                    spacing: 16
+                    Item {
+                        width: parent.width; height: 72
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "优化提示词"; font.pixelSize: 36; color: "black"
+                        }
+                        Button {
+                            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                            label: "恢复默认"
+                            onClicked: promptEdit.text = voice.defaultPrompt
+                        }
+                    }
+                    EditBox { id: promptEdit; lines: 5; initial: voice.prompt; onSave: (t) => voice.prompt = t }
+                    Text { text: "热词"; font.pixelSize: 36; color: "black" }
+                    Note { text: "人名、产品名等专有名词，每行一个或用逗号隔开。优化时会优先采用这里的写法。" }
+                    EditBox { id: hotwordEdit; lines: 3; initial: voice.hotwords; onSave: (t) => voice.hotwords = t }
+                }
 
                 // 切换方式
                 Heading { text: "怎样切换" }
                 Note {
                     color: "black"
-                    text: "打字：拼音与英文之间，单击 Shift、按 Ctrl+空格，或点右下角工具条的「中/英」。\n"
-                        + "说话：点工具条的「语音」开始，说完再点一下，文字会出现在光标处；外接键盘上单击 Alt 也一样，按住 Alt 说话、松开即结束。Esc 取消。\n"
+                    text: "打字：拼音与英文之间，单击 Shift 或按 Ctrl+空格。\n"
+                        + "说话：外接键盘上按住空格说话，松开即识别并整理，文字出现在光标处；屏幕键盘上按麦克风键开始，再按一次结束。Esc 取消。\n"
                         + "两者互不影响：语音输入完，继续打字时仍是原来的中文或英文。"
                 }
             }

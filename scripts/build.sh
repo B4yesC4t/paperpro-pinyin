@@ -11,6 +11,7 @@
 # 产物：
 #   libpaperpro-pinyin.so       注入 xochitl 的输入法模块（Qt 6.10）
 #   libpaperpro-pinyin-loader.so  加载器：装在系统分区，等 /home 就绪后加载模块
+#   voice-hfp                   蓝牙免提麦克风录音（语音输入）
 #   rime/pinyin-rime            Rime 引擎的命令行助手
 #   rime/lib, rime/plugins      librime 及其依赖、librime-lua
 #   rime/shared                 雾凇拼音方案与预编译词库
@@ -70,6 +71,10 @@ gcc -O2 -fPIC -shared -Wall -Wextra /w/src/loader/paperpro-pinyin-loader.c -o $O
     -L$Q/lib -Wl,--no-as-needed -lQt6Quick -lQt6Qml -lQt6Gui -lQt6Core -Wl,--as-needed -ldl -lpthread
 strip --strip-unneeded $OUT/libpaperpro-pinyin-loader.so
 
+echo "==> 编译蓝牙麦克风录音程序"
+gcc -O2 -Wall -Wextra -o $OUT/voice-hfp /w/src/helper/voice-hfp.c
+strip $OUT/voice-hfp
+
 echo "==> 编译 Rime 助手"
 gcc -O2 -Wall -o $OUT/rime/pinyin-rime /w/src/helper/pinyin-rime.c -lrime -ldl
 strip $OUT/rime/pinyin-rime
@@ -111,5 +116,7 @@ chown -R "$HOST_UID:$HOST_GID" /w/out /w/.cache
 cp device/install.sh device/uninstall.sh device/mirror-root.sh device/bluetooth-up.sh "$OUT/"
 chmod +x "$OUT"/*.sh
 cp LICENSE THIRD_PARTY_NOTICES.md VERSION "$OUT/"
+cp assets/paperpro-pinyin-icons.ttf "$OUT/"
+cp assets/MaterialIcons.LICENSE "$OUT/licenses/material-icons.LICENSE"
 du -sh "$OUT"
 echo "构建完成：$OUT"

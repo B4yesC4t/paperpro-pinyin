@@ -60,6 +60,25 @@ static void logf(const char *fmt, ...) {
 #include "bluetooth.h"
 #include "voice.h"
 
+// Keys added to the Chinese on-screen keyboard (aliasKeyboardLayout): what
+// they type is taken by the input method as a command. Settings and voice are
+// icons (Material Icons' private-use code points, from the font installed
+// next to this library: registerIconFont).
+static const QString kKeySettings = QString(QChar(0xe8b8));  // settings (gear)
+static const QString kKeyVoice = QString(QChar(0xe029));     // mic
+static const QString kKeyLang = QStringLiteral("中/英");
+
+// The icon font, and Qt told to fall back to it for these code points (they
+// are in no other font on the tablet).
+static void registerIconFont() {
+    int id = QFontDatabase::addApplicationFont(basePath("paperpro-pinyin-icons.ttf"));
+    QStringList families = id >= 0 ? QFontDatabase::applicationFontFamilies(id) : QStringList();
+    for (const QString &f : families)
+        for (QChar::Script sc : {QChar::Script_Common, QChar::Script_Unknown})
+            QFontDatabase::addApplicationFallbackFontFamily(sc, f);
+    logf("icon font: %s", families.isEmpty() ? "not loaded" : qPrintable(families.join(QLatin1String(", "))));
+}
+
 // The candidate bar, the editing toolbar and the settings page (overlay.qml,
 // turned into a string constant at build time).
 #include "overlay.qml.h"
@@ -74,24 +93,92 @@ public:
         });
         if (m_debug) openControl();
         QTimer::singleShot(5000, this, [this] { launchRime(); });
+        // Whether the focus takes text changes without a focus event too (a
+        // notebook switched between pen and text tools keeps its focus), and
+        // the module may start with a text field already focused: check twice
+        // a second, redraw only on a change.
+        auto *editingCheck = new QTimer(this);
+        connect(editingCheck, &QTimer::timeout, this, [this] {
+            if (editable(QGuiApplication::focusObject()) != m_editing) focusChanged();
+        });
+        editingCheck->start(500);
         m_bt = new Bluetooth(this);
         m_voice = new Voice(this);
+        m_oskHold.setSingleShot(true);
+        connect(&m_oskHold, &QTimer::timeout, this, [this] {
+            if (!m_oskSpaceDown) return;
+            // The space the keyboard types when it is let go is not wanted.
+            m_dropSpace = true;
+            if (!voiceReady()) {
+                m_oskSpaceDown = false;
+                showSettings(true);
+                return;
+            }
+            m_oskVoice = true;
+            if (!m_preedit.isEmpty()) rime(QStringLiteral("pick 0"));
+            if (m_bar) m_bar->setProperty("voiceHint", QStringLiteral("松开空格结束"));
+            m_voice->start(m_bt->mic());
+            if (m_bar && m_voice->state() == QLatin1String("connecting")) m_bar->setProperty("voiceWanted", true);
+        });
+        m_spaceHold.setSingleShot(true);
+        connect(&m_spaceHold, &QTimer::timeout, this, [this] {
+            if (!m_spaceDown) return;
+            if (!voiceReady()) {
+                m_spaceDown = false;
+                showSettings(true);
+                return;
+            }
+            m_spaceVoice = true;
+            if (!m_preedit.isEmpty()) rime(QStringLiteral("pick 0"));
+            if (m_bar) m_bar->setProperty("voiceHint", QStringLiteral("松开空格结束"));
+            m_voice->start(m_bt->mic());
+            if (m_bar && m_voice->state() == QLatin1String("connecting")) m_bar->setProperty("voiceWanted", true);
+        });
+        connect(m_voice, &Voice::text, this, [this](const QString &t) {
+            if (!editable(QGuiApplication::focusObject())) {
+                logf("voice: no text field to put the result in");
+                return;
+            }
+            commit(t);
+        });
     }
 
     Q_INVOKABLE void pick(int i) { rime(QStringLiteral("pick %1").arg(i)); }
     Q_INVOKABLE void page(int d) { rime(QStringLiteral("page %1").arg(d > 0 ? 1 : 0)); }
-    // 设置页打开时输入法让开：按键照常交给设置页（Esc 关闭它）。
     Q_INVOKABLE void settingsShown(bool open) {
         m_settingsOpen = open;
-        if (open && !m_preedit.isEmpty()) rime(QStringLiteral("clear"));
+        if (!m_preedit.isEmpty()) rime(QStringLiteral("clear"));
+        // 关闭时把焦点还给笔记，免得键盘还对着设置页里的编辑框。
+        if (!open && m_bar) m_bar->forceActiveFocus(), m_bar->setFocus(false);
+    }
+    // 语音输入能用：蓝牙开着、选了麦克风、有 API Key。否则去设置页。
+    bool voiceReady() const {
+        return m_bt->state() == QLatin1String("on") && !m_bt->mic().isEmpty() && !Voice::key().isEmpty();
+    }
+    // 短按空格：把按下、松开原样补发给编辑器（按下时先扣住了）。
+    void replaySpace() {
+        QWindow *w = QGuiApplication::focusWindow();
+        if (!w) return;
+        m_replaying = true;
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+        QCoreApplication::sendEvent(w, &press);
+        QCoreApplication::sendEvent(w, &release);
+        m_replaying = false;
     }
     void showSettings(bool open) {
         if (m_bar) m_bar->setProperty("settingsOpen", open);
     }
-    // 工具条上的「语音」。录音还没接上：先去设置页配好麦克风。
+    // 语音：开始，再来一次结束。正在打的拼音先按第一个候选上屏。
     Q_INVOKABLE void voice() {
-        logf("voice: requested (mic %s)", qPrintable(m_bt->mic()));
-        showSettings(true);
+        if (!voiceReady() && m_voice->state() != QLatin1String("recording")) {
+            showSettings(true);
+            return;
+        }
+        if (m_bar) m_bar->setProperty("voiceHint", QStringLiteral("再按一次结束"));
+        if (!m_preedit.isEmpty() && m_voice->state() != QLatin1String("recording")) rime(QStringLiteral("pick 0"));
+        m_voice->toggle(m_bt->mic());
+        if (m_bar && m_voice->state() == QLatin1String("connecting")) m_bar->setProperty("voiceWanted", true);
     }
     Q_INVOKABLE void toggle() {
         rime(QStringLiteral("ascii %1").arg(m_ascii ? 0 : 1));
@@ -147,6 +234,14 @@ protected:
         case QEvent::FocusIn:
         case QEvent::FocusOut:
             QTimer::singleShot(0, this, [this] { focusChanged(); });
+            break;
+        case QEvent::TouchBegin:
+        case QEvent::TouchEnd:
+        case QEvent::TouchCancel:
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonRelease:
+            if (o->isQuickItemType() && !qstrcmp(o->metaObject()->className(), "VirtualKeyboard"))
+                keyboardPointer(static_cast<QQuickItem *>(o), e);
             break;
         default:
             break;
@@ -360,6 +455,48 @@ private:
         } else if (cmd.startsWith(QLatin1String("fastmode "))) {
             if (m_bar) m_bar->setProperty("fastMode", cmd.mid(9).toInt());
             logf("fastmode %s", qPrintable(m_bar ? m_bar->property("fastMode").toString() : QStringLiteral("-")));
+        } else if (cmd.startsWith(QLatin1String("tree "))) {
+            // tree <regex> [depth]: visible items whose class matches, with their
+            // children, to see how a part of xochitl's UI is put together.
+            QStringList a = cmd.mid(5).split(QLatin1Char(' '));
+            QRegularExpression re(a.value(0));
+            int depth = a.value(1, QStringLiteral("3")).toInt();
+            std::function<void(QQuickItem *, int, int)> show = [&](QQuickItem *it, int level, int max) {
+                QRectF r = it->mapRectToScene(it->boundingRect());
+                QString extra;
+                for (const char *p : {"text", "iconSource", "source", "objectName", "checked", "label", "title"}) {
+                    QVariant v = it->property(p);
+                    if (v.isValid() && !v.toString().isEmpty()) extra += QStringLiteral(" %1=%2").arg(QLatin1String(p), v.toString().left(50));
+                }
+                logf("%s%s %.0f,%.0f %.0fx%.0f vis %d z %.0f%s", QByteArray(level * 2, ' ').constData(),
+                     it->metaObject()->className(), r.x(), r.y(), r.width(), r.height(), it->isVisible(), it->z(),
+                     qPrintable(extra));
+                if (level < max)
+                    for (QQuickItem *c : it->childItems()) show(c, level + 1, max);
+            };
+            int found = 0;
+            std::function<void(QQuickItem *)> walk = [&](QQuickItem *it) {
+                if (!it->isVisible()) return;
+                if (re.match(QString::fromLatin1(it->metaObject()->className())).hasMatch() && found++ < 6) {
+                    show(it, 0, depth);
+                    return;
+                }
+                for (QQuickItem *c : it->childItems()) walk(c);
+            };
+            for (QWindow *w : QGuiApplication::topLevelWindows())
+                if (auto *qw = qobject_cast<QQuickWindow *>(w)) walk(qw->contentItem());
+            logf("tree: %d found", found);
+        } else if (cmd.startsWith(QLatin1String("res "))) {
+            // res <path>: copy a file (e.g. from xochitl's resources) to /tmp/paperpro-pinyin-res
+            QString path = cmd.mid(4);
+            if (path.endsWith(QLatin1Char('/'))) {
+                logf("res %s: %s", qPrintable(path), qPrintable(QDir(path).entryList().join(QLatin1String(", "))));
+                return;
+            }
+            QFile f(path), out(QStringLiteral("/tmp/paperpro-pinyin-res"));
+            bool ok = f.open(QIODevice::ReadOnly) && out.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                      out.write(f.readAll()) >= 0;
+            logf("res %s: %s (%lld bytes)", qPrintable(path), ok ? "copied" : "failed", f.size());
         } else if (cmd == QLatin1String("modes")) {
             // Every e-paper screen-mode region in the UI: its mode, size and owners.
             std::function<void(QQuickItem *)> walk = [&](QQuickItem *it) {
@@ -387,6 +524,63 @@ private:
     int m_ctlFd = -1;
     QByteArray m_ctlBuf;
 
+    // ---- holding the on-screen keyboard's space bar to talk ----------------------
+    // The keyboard types a space only when the key is let go, and says nothing
+    // about how long it was held; so its touches are watched here. Where the
+    // space bar is comes from the keyboard's own picture: the widest stretch
+    // of the bottom row with nothing drawn in it.
+    QRectF spaceRect(QQuickItem *kb) {
+        QString key = QStringLiteral("%1x%2@%3").arg(kb->width()).arg(kb->height()).arg(kb->mapToScene(QPointF(0, 0)).x());
+        if (key == m_spaceKey) return m_spaceRect;
+        QQuickWindow *w = kb->window();
+        if (!w) return QRectF();
+        QImage img = w->grabWindow();
+        qreal dpr = img.devicePixelRatio(), h = kb->height(), wd = kb->width(), y = h - h / 8;
+        int best = -1, bestLen = 0, run = -1;
+        for (int x = 0; x <= int(wd); x++) {
+            QPoint ip = (kb->mapToScene(QPointF(x, y)) * dpr).toPoint();
+            bool drawn = x == int(wd) || !img.rect().contains(ip) || qGray(img.pixel(ip)) > 128;
+            if (!drawn) {
+                if (run < 0) run = x;
+            } else if (run >= 0) {
+                if (x - run > bestLen) bestLen = x - run, best = run;
+                run = -1;
+            }
+        }
+        m_spaceKey = key;
+        m_spaceRect = bestLen > wd / 6 ? QRectF(best, h * 3 / 4, bestLen, h / 4) : QRectF();
+        logf("keyboard: space bar at %.0f..%.0f of %.0f", m_spaceRect.left(), m_spaceRect.right(), wd);
+        return m_spaceRect;
+    }
+
+    void keyboardPointer(QQuickItem *kb, QEvent *e) {
+        bool down = e->type() == QEvent::TouchBegin || e->type() == QEvent::MouseButtonPress;
+        QPointF pos;
+        if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease) {
+            pos = static_cast<QMouseEvent *>(e)->position();
+        } else {
+            auto *t = static_cast<QTouchEvent *>(e);
+            if (!t->points().isEmpty()) pos = t->points().first().position();
+        }
+        if (down) {
+            if (m_oskSpaceDown || m_settingsOpen || !editable(QGuiApplication::focusObject())) return;
+            QRectF r = spaceRect(kb);
+            if (m_debug) logf("keyboard: press at %.0f,%.0f (space %d)", pos.x(), pos.y(), r.contains(pos));
+            if (r.contains(pos)) {
+                m_oskSpaceDown = true;
+                m_oskHold.start(kSpaceHold);
+            }
+            return;
+        }
+        if (!m_oskSpaceDown) return;
+        m_oskSpaceDown = false;
+        m_oskHold.stop();
+        if (m_oskVoice) {
+            m_oskVoice = false;
+            m_voice->stop();
+        }
+    }
+
     // ---- the focused editor ------------------------------------------------------
     static bool editable(QObject *fo) {
         if (!fo) return false;
@@ -399,6 +593,7 @@ private:
         bool ed = editable(QGuiApplication::focusObject());
         if (!ed && !m_preedit.isEmpty()) rime(QStringLiteral("clear"));
         m_editing = ed;
+        if (m_bt->state() == QLatin1String("on")) m_voice->editing(ed, m_bt->mic());
         updateBar();
     }
 
@@ -415,15 +610,50 @@ private:
     // ---- keys -------------------------------------------------------------------------
     bool key(QKeyEvent *k) {
         Qt::KeyboardModifiers mods = k->modifiers();
-        if (m_settingsOpen) {
-            if (k->type() == QEvent::KeyPress && k->key() == Qt::Key_Escape) {
-                showSettings(false);
+        // 设置页里：Esc 关闭（没有在打拼音时）；编辑框照常用拼音。
+        if (m_settingsOpen && k->type() == QEvent::KeyPress && k->key() == Qt::Key_Escape && m_preedit.isEmpty()) {
+            showSettings(false);
+            m_swallowRelease.insert(k->key());
+            return true;
+        }
+        if (m_replaying) return false;
+        // Holding Space talks: past kSpaceHold it records until Space is let go,
+        // then the speech is recognized and put at the cursor. A shorter press
+        // is an ordinary space, sent on release.
+        if (k->key() == Qt::Key_Space && !(mods & ~Qt::KeypadModifier) && !m_settingsOpen &&
+            editable(QGuiApplication::focusObject())) {
+            if (k->type() == QEvent::KeyPress) {
+                if (!k->isAutoRepeat()) {
+                    m_spaceVoice = false;
+                    m_spaceDown = true;
+                    m_spaceHold.start(kSpaceHold);
+                }
                 return true;
             }
-            return false;
+            if (k->isAutoRepeat()) return true;
+            m_spaceHold.stop();
+            if (!m_spaceDown) return false;
+            m_spaceDown = false;
+            if (m_spaceVoice) {
+                m_spaceVoice = false;
+                m_voice->stop();
+            } else if (!m_preedit.isEmpty()) {
+                rime(QStringLiteral("key 32 0"));
+            } else {
+                replaySpace();
+            }
+            return true;
         }
-        // A tap on Shift alone switches 中/英, as in common input methods.
+        if (k->key() == Qt::Key_Escape && k->type() == QEvent::KeyPress && m_voice->busy()) {
+            m_voice->cancel();
+            m_swallowRelease.insert(k->key());
+            return true;
+        }
+        // A tap on Shift alone switches 中/英, as in common input methods. Only
+        // a keyboard's Shift: the on-screen keyboard's (and its automatic
+        // capital at the start of a sentence) is not a switch.
         if (k->key() == Qt::Key_Shift) {
+            if (!k->spontaneous()) return false;
             if (k->type() == QEvent::KeyPress && !k->isAutoRepeat()) m_shiftAlone = true;
             else if (k->type() == QEvent::KeyRelease && m_shiftAlone && editable(QGuiApplication::focusObject())) {
                 m_shiftAlone = false;
@@ -476,6 +706,22 @@ private:
     bool inputMethod(QInputMethodEvent *im) {
         if (!editable(QGuiApplication::focusObject()) || !im->preeditString().isEmpty()) return false;
         const QString c = im->commitString();
+        if (m_dropSpace && c == QLatin1String(" ")) {  // the space key that was held to talk
+            m_dropSpace = false;
+            return true;
+        }
+        if (c == kKeyLang) {
+            toggle();
+            return true;
+        }
+        if (c == kKeyVoice) {
+            voice();
+            return true;
+        }
+        if (c == kKeySettings) {
+            showSettings(true);
+            return true;
+        }
         bool composing = !m_preedit.isEmpty();
         if (c.isEmpty() && im->replacementLength() > 0 && im->replacementStart() < 0 && composing)
             return rime(QStringLiteral("key %1 0").arg(0xff08));
@@ -487,6 +733,12 @@ private:
         if (ch == '\n' || ch == '\r') return composing && rime(QStringLiteral("key %1 0").arg(0xff0d));
         if (ch < 0x20 || ch > 0x7e) return false;
         bool upper = ch >= 'A' && ch <= 'Z';
+        // On the on-screen keyboard a capital is mostly its automatic one at
+        // the start of a sentence: in Chinese it is the pinyin letter.
+        if (upper && !m_ascii) {
+            ch = ushort(ch - 'A' + 'a');
+            upper = false;
+        }
         return rime(QStringLiteral("key %1 %2").arg(ch).arg(upper ? 1 : 0));
     }
 
@@ -743,6 +995,12 @@ private:
     bool m_ready = false;
     QElapsedTimer m_launched, m_retry;
     bool m_handled = false, m_ascii = false, m_prev = false, m_next = false;
+    static constexpr int kSpaceHold = 400;
+    QTimer m_spaceHold, m_oskHold;
+    bool m_oskSpaceDown = false, m_oskVoice = false, m_dropSpace = false;
+    QString m_spaceKey;
+    QRectF m_spaceRect;
+    bool m_spaceDown = false, m_spaceVoice = false, m_replaying = false;
     bool m_committing = false, m_shiftAlone = false, m_editing = false, m_settingsOpen = false, m_plainOverlay = false;
     Bluetooth *m_bt = nullptr;
     Voice *m_voice = nullptr;
@@ -766,6 +1024,29 @@ static void putBE(QByteArray &b, quint32 v, int bytes) {
     for (int i = bytes - 1; i >= 0; i--) b.append(char((v >> (8 * i)) & 0xff));
 }
 
+// The Chinese keyboard's bottom row: 🌐 123 ⚙ 🎤 ， 空格 。 中/英 回车
+static QByteArray withImeKeys(const QByteArray &json) {
+    QJsonDocument d = QJsonDocument::fromJson(json);
+    if (!d.isObject()) return json;
+    QJsonObject o = d.object();
+    QJsonArray row = o.value(QLatin1String("spacebarRow")).toArray();
+    int at = 0;
+    for (int i = 0; i < row.size(); i++)
+        if (row.at(i).toObject().value(QLatin1String("special")).toString() == QLatin1String("alt")) at = i + 1;
+    auto key = [](const QString &label) {
+        QJsonArray a{label};
+        return QJsonObject{{QStringLiteral("default"), a}, {QStringLiteral("shifted"), a}};
+    };
+    row.insert(at, key(kKeyVoice));
+    row.insert(at, key(kKeySettings));
+    int enter = row.size();
+    for (int i = 0; i < row.size(); i++)
+        if (row.at(i).toObject().value(QLatin1String("special")).toString() == QLatin1String("enter")) enter = i;
+    row.insert(enter, key(kKeyLang));
+    o.insert(QStringLiteral("spacebarRow"), row);
+    return QJsonDocument(o).toJson(QJsonDocument::Compact);
+}
+
 static void aliasKeyboardLayout(const QString &to, const QString &from) {
     const QString base = QStringLiteral(":/misc/keyboards/");
     if (QFile::exists(base + to + QStringLiteral("/keyboard_layout.json"))) return;
@@ -785,7 +1066,9 @@ static void aliasKeyboardLayout(const QString &to, const QString &from) {
     for (const QString &f : files) {
         QFile in(base + from + QLatin1Char('/') + f);
         if (!in.open(QIODevice::ReadOnly)) return;
-        nodes.append({f, false, 0, 0, in.readAll()});
+        QByteArray content = in.readAll();
+        if (f == QLatin1String("keyboard_layout.json")) content = withImeKeys(content);
+        nodes.append({f, false, 0, 0, content});
     }
     QByteArray tree, data, names;
     for (const Node &n : nodes) {
@@ -843,6 +1126,7 @@ static void start() {
     // The application object is still being built here; the filter goes in
     // once its event loop runs.
     QTimer::singleShot(0, qApp, [] {
+        registerIconFont();
         auto *ime = new PinyinIme;
         ime->setParent(qApp);
         qApp->installEventFilter(ime);
