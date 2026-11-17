@@ -1,4 +1,5 @@
 import QtQuick
+import xofm.libs.epaper // FAST-REGION
 // A zero-size anchor: a full-size item over xochitl's UI would be what its
 // own hit tests (childAt) find. Children are not clipped, and are tappable.
 Item {
@@ -16,6 +17,7 @@ Item {
     property rect cursor: Qt.rect(0, 0, 0, 0)
     property real bottomMargin: 0   // the on-screen keyboard, when it is up
     property bool settingsOpen: false
+    property int fastMode: 2   // EPScreenModeItem::Animation
     onSettingsOpenChanged: { bt.watch(settingsOpen); ime.settingsShown(settingsOpen) }
     readonly property bool cursorOk: cursor.height > 0 && cursor.y >= 0 && cursor.y + cursor.height <= areaH
                                      && cursor.x >= 0 && cursor.x <= areaW
@@ -32,9 +34,18 @@ Item {
         return Math.max(8, Math.min(areaW - w - 8, cursor.x - 14))
     }
 
+    // xochitl refreshes each part of the glass in the mode of the e-paper
+    // region it lies in. A notebook page is one "Content" region, drawn with
+    // the slow high-quality waveform, so a bar floating over it, changing on
+    // every key, queued up updates and fell seconds behind. The bar, the 中/英
+    // chip and the toolbar are "Animation" regions, as xochitl's own text
+    // fields are. (Where this firmware has no such type, it is a plain Item.)
+    component FastRegion: ScreenModeItem {} // FAST-REGION
+
     Rectangle {
         id: bar
         visible: root.preedit.length > 0
+        FastRegion { anchors.fill: parent; mode: root.fastMode }
         color: "white"; border.color: "black"; border.width: 2; radius: 8
         width: Math.min(root.areaW - 16, content.implicitWidth + 24)
         height: content.implicitHeight + 16
@@ -98,6 +109,7 @@ Item {
         color: root.chinese ? "black" : "white"; border.color: "black"; border.width: 2
         x: root.placeX(width)
         y: root.placeY(height)
+        FastRegion { anchors.fill: parent; mode: root.fastMode }
         Text {
             anchors.centerIn: parent
             text: root.chinese ? "中" : "英"
@@ -135,6 +147,7 @@ Item {
         ToolButton { label: "语音"; onClicked: ime.voice() }
         ToolButton { label: "设置"; onClicked: root.settingsOpen = true }
     }
+    FastRegion { mode: root.fastMode; visible: tools.visible; x: tools.x; y: tools.y; width: tools.width; height: tools.height }
 
     // ---- 设置页 ---------------------------------------------------------------------
     component Button: Rectangle {

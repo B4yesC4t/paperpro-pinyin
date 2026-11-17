@@ -271,6 +271,111 @@ private:
                 logf("  %s %s paired %d audio %d", qPrintable(m.value("address").toString()),
                      qPrintable(m.value("name").toString()), m.value("paired").toBool(), m.value("audio").toBool());
             }
+        } else if (cmd.startsWith(QLatin1String("methods "))) {
+            // methods <regex>: invokable methods and properties (of every class
+            // reachable from the windows' items) whose names match.
+            QRegularExpression re(cmd.mid(8), QRegularExpression::CaseInsensitiveOption);
+            QSet<const QMetaObject *> seen;
+            std::function<void(QObject *, int)> walk = [&](QObject *o, int depth) {
+                if (depth > 60) return;
+                for (const QMetaObject *mo = o->metaObject(); mo && mo != &QObject::staticMetaObject; mo = mo->superClass()) {
+                    if (seen.contains(mo)) break;
+                    seen.insert(mo);
+                    for (int i = mo->methodOffset(); i < mo->methodCount(); i++) {
+                        QMetaMethod m = mo->method(i);
+                        if (m.methodType() == QMetaMethod::Signal) continue;
+                        if (re.match(QString::fromLatin1(m.name())).hasMatch())
+                            logf("  %s::%s", mo->className(), m.methodSignature().constData());
+                    }
+                    for (int i = mo->propertyOffset(); i < mo->propertyCount(); i++)
+                        if (re.match(QString::fromLatin1(mo->property(i).name())).hasMatch())
+                            logf("  %s.%s = %s", mo->className(), mo->property(i).name(),
+                                 qPrintable(o->property(mo->property(i).name()).toString().left(80)));
+                }
+                for (QObject *c : o->children()) walk(c, depth + 1);
+                if (auto *it = qobject_cast<QQuickItem *>(o))
+                    for (QQuickItem *c : it->childItems()) walk(c, depth + 1);
+            };
+            for (QWindow *w : QGuiApplication::topLevelWindows())
+                if (auto *qw = qobject_cast<QQuickWindow *>(w)) walk(qw->contentItem(), 0);
+            for (QObject *c : qApp->children()) walk(c, 0);
+            logf("methods: done");
+        } else if (cmd == QLatin1String("rt")) {
+            // Render timing: how long each frame of the bar's window takes.
+            auto *w = m_barWindow.data();
+            if (!w) { logf("rt: no window"); return; }
+            static QElapsedTimer t;
+            static bool hooked = false;
+            if (!hooked) {
+                hooked = true;
+                logf("rt: render loop thread %s", w->thread() == QThread::currentThread() ? "gui" : "other");
+                connect(w, &QQuickWindow::beforeSynchronizing, this, [] { t.start(); }, Qt::DirectConnection);
+                connect(w, &QQuickWindow::afterRendering, this, [] {
+                    if (t.isValid()) logf("rt: frame %lld ms", t.elapsed());
+                }, Qt::DirectConnection);
+            }
+        } else if (cmd.startsWith(QLatin1String("vis "))) {
+            // vis <name> 0|1: hide or show one part of the overlay (bar, tools, page, chip, all)
+            QStringList a = cmd.split(QLatin1Char(' '));
+            if (a.size() == 3 && m_bar) {
+                if (a[1] == QLatin1String("all")) m_bar->setVisible(a[2] == QLatin1String("1"));
+                else if (a[1] == QLatin1String("root"))
+                    m_bar->setSize(a[2] == QLatin1String("1") && m_barRoot ? m_barRoot->size() : QSizeF(0, 0));
+                logf("vis %s %s: bar visible %d size %.0fx%.0f", qPrintable(a[1]), qPrintable(a[2]), m_bar->isVisible(),
+                     m_bar->width(), m_bar->height());
+            }
+        } else if (cmd.startsWith(QLatin1String("probe "))) {
+            // probe <qml>: create it in xochitl's engine and list its class's
+            // properties and enums (e.g. probe import xofm.libs.epaper; ScreenModeItem {})
+            QQmlEngine *engine = m_bar ? qmlEngine(m_bar) : nullptr;
+            if (!engine) { logf("probe: no engine yet"); return; }
+            auto *c = new QQmlComponent(engine, this);
+            QString src = cmd.mid(6);
+            src.replace(QLatin1String("; "), QLatin1String("\n"));
+            c->setData(src.toUtf8(), QUrl(QStringLiteral("paperpro-pinyin:/probe.qml")));
+            auto done = [this, c] {
+                if (c->isLoading()) return;
+                QObject *o = c->isReady() ? c->create() : nullptr;
+                if (!o) { logf("probe: %s", qPrintable(c->errorString())); c->deleteLater(); return; }
+                for (const QMetaObject *mo = o->metaObject(); mo; mo = mo->superClass()) {
+                    logf("probe class %s", mo->className());
+                    if (QByteArray(mo->className()) == "QQuickItem" || QByteArray(mo->className()) == "QObject") break;
+                    for (int i = mo->enumeratorOffset(); i < mo->enumeratorCount(); i++) {
+                        QMetaEnum e = mo->enumerator(i);
+                        QStringList keys;
+                        for (int k = 0; k < e.keyCount(); k++) keys << QStringLiteral("%1=%2").arg(e.key(k)).arg(e.value(k));
+                        logf("  enum %s: %s", e.name(), qPrintable(keys.join(QLatin1String(", "))));
+                    }
+                    for (int i = mo->propertyOffset(); i < mo->propertyCount(); i++)
+                        logf("  prop %s %s = %s", mo->property(i).typeName(), mo->property(i).name(),
+                             qPrintable(o->property(mo->property(i).name()).toString()));
+                    for (int i = mo->methodOffset(); i < mo->methodCount(); i++)
+                        logf("  method %s", mo->method(i).methodSignature().constData());
+                }
+                delete o;
+                c->deleteLater();
+            };
+            connect(c, &QQmlComponent::statusChanged, this, done);
+            done();
+        } else if (cmd.startsWith(QLatin1String("fastmode "))) {
+            if (m_bar) m_bar->setProperty("fastMode", cmd.mid(9).toInt());
+            logf("fastmode %s", qPrintable(m_bar ? m_bar->property("fastMode").toString() : QStringLiteral("-")));
+        } else if (cmd == QLatin1String("modes")) {
+            // Every e-paper screen-mode region in the UI: its mode, size and owners.
+            std::function<void(QQuickItem *)> walk = [&](QQuickItem *it) {
+                if (it->inherits("EPScreenModeItem")) {
+                    QStringList up;
+                    for (QQuickItem *a = it->parentItem(); a && up.size() < 4; a = a->parentItem())
+                        up << QString::fromLatin1(a->metaObject()->className()).section(QLatin1Char('_'), 0, 0);
+                    QRectF r = it->mapRectToScene(it->boundingRect());
+                    logf("  mode %s vis %d %.0f,%.0f %.0fx%.0f in %s", qPrintable(it->property("mode").toString()),
+                         it->isVisible(), r.x(), r.y(), r.width(), r.height(), qPrintable(up.join(QLatin1String(" < "))));
+                }
+                for (QQuickItem *c : it->childItems()) walk(c);
+            };
+            for (QWindow *w : QGuiApplication::topLevelWindows())
+                if (auto *qw = qobject_cast<QQuickWindow *>(w)) walk(qw->contentItem());
+            logf("modes: done");
         } else if (cmd == QLatin1String("grab")) {
             auto *w = qobject_cast<QQuickWindow *>(m_barWindow ? m_barWindow.data() : QGuiApplication::focusWindow());
             if (!w) { logf("grab: no window"); return; }
@@ -544,7 +649,22 @@ private:
         return nullptr;
     }
 
-    void updateBar() {
+    void updateBar() { pushBar(); }
+
+    QByteArray overlayQml() const {
+        if (!m_plainOverlay) return QByteArray(kOverlayQml);
+        QList<QByteArray> out;
+        for (const QByteArray &l : QByteArray(kOverlayQml).split('\n')) {
+            if (l.contains("// FAST-REGION")) {
+                if (l.contains("component FastRegion")) out << "    component FastRegion: Item { property int mode }";
+                continue;
+            }
+            out << l;
+        }
+        return out.join('\n');
+    }
+
+    void pushBar() {
         QObject *fo = QGuiApplication::focusObject();
         auto *item = qobject_cast<QQuickItem *>(fo);
         QQuickItem *root = rootItem(item);
@@ -566,6 +686,14 @@ private:
                     if (!comp || comp->isLoading()) return;
                     m_pending = nullptr;
                     comp->deleteLater();
+                    if (r && comp->isError() && !m_plainOverlay) {
+                        // No e-paper screen modes on this firmware: the same
+                        // overlay with plain Items in their place.
+                        logf("candidate bar: no fast refresh regions (%s)", qPrintable(comp->errorString().trimmed()));
+                        m_plainOverlay = true;
+                        QTimer::singleShot(0, this, [this] { pushBar(); });
+                        return;
+                    }
                     if (!r || !comp->isReady()) {
                         logf("candidate bar: %s", qPrintable(comp->errorString()));
                         return;
@@ -583,10 +711,10 @@ private:
                     m_barWindow = r->window();
                     m_barRoot = r;
                     logf("candidate bar placed in %s", r->metaObject()->className());
-                    updateBar();
+                    pushBar();
                 };
                 connect(m_pending, &QQmlComponent::statusChanged, this, make);
-                m_pending->setData(kOverlayQml, QUrl(QStringLiteral("paperpro-pinyin:/overlay.qml")));
+                m_pending->setData(overlayQml(), QUrl(QStringLiteral("paperpro-pinyin:/overlay.qml")));
                 make();
             }
         }
@@ -615,7 +743,7 @@ private:
     bool m_ready = false;
     QElapsedTimer m_launched, m_retry;
     bool m_handled = false, m_ascii = false, m_prev = false, m_next = false;
-    bool m_committing = false, m_shiftAlone = false, m_editing = false, m_settingsOpen = false;
+    bool m_committing = false, m_shiftAlone = false, m_editing = false, m_settingsOpen = false, m_plainOverlay = false;
     Bluetooth *m_bt = nullptr;
     Voice *m_voice = nullptr;
     QString m_preedit;
