@@ -49,13 +49,19 @@ OUT=/w/out/paperpro-pinyin
 mkdir -p $OUT/rime/lib $OUT/rime/plugins $OUT/rime/shared $OUT/licenses /tmp/b
 
 echo "==> 编译输入法模块"
-$Q/libexec/moc -I$Q/include -I$Q/include/QtCore /w/src/module/paperpro-pinyin.cpp -o /tmp/b/paperpro-pinyin.moc
-g++ -std=c++17 -O2 -fPIC -shared -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter -I/tmp/b \
+M=/w/src/module
+for h in bluetooth voice; do
+    $Q/libexec/moc -I$Q/include -I$Q/include/QtCore $M/$h.h -o /tmp/b/moc_$h.cpp
+done
+$Q/libexec/moc -I$Q/include -I$Q/include/QtCore $M/paperpro-pinyin.cpp -o /tmp/b/paperpro-pinyin.moc
+# overlay.qml 作为字符串常量编进模块。
+{ printf "static const char kOverlayQml[] = R\"QML("; cat $M/overlay.qml; printf ")QML\";\n"; } > /tmp/b/overlay.qml.h
+g++ -std=c++17 -O2 -fPIC -shared -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter -I/tmp/b -I$M \
     -DPINYIN_VERSION="\"$VERSION\"" \
     -I$Q/include -I$Q/include/QtCore -I$Q/include/QtGui -I$Q/include/QtQml -I$Q/include/QtQuick \
-    -I$Q/include/QtQmlIntegration -I$Q/include/QtNetwork \
-    /w/src/module/paperpro-pinyin.cpp -o $OUT/libpaperpro-pinyin.so \
-    -L$Q/lib -lQt6Quick -lQt6Qml -lQt6Gui -lQt6Core -Wl,--as-needed -Wl,-z,defs
+    -I$Q/include/QtQmlIntegration -I$Q/include/QtNetwork -I$Q/include/QtDBus \
+    $M/paperpro-pinyin.cpp -o $OUT/libpaperpro-pinyin.so \
+    -L$Q/lib -lQt6Quick -lQt6Qml -lQt6Gui -lQt6Network -lQt6DBus -lQt6Core -Wl,--as-needed -Wl,-z,defs
 strip --strip-unneeded $OUT/libpaperpro-pinyin.so
 
 echo "==> 编译加载器"
@@ -102,7 +108,7 @@ echo "    $got" | cut -c1-120
 chown -R "$HOST_UID:$HOST_GID" /w/out /w/.cache
 '
 
-cp device/install.sh device/uninstall.sh device/mirror-root.sh "$OUT/"
+cp device/install.sh device/uninstall.sh device/mirror-root.sh device/bluetooth-up.sh "$OUT/"
 chmod +x "$OUT"/*.sh
 cp LICENSE THIRD_PARTY_NOTICES.md VERSION "$OUT/"
 du -sh "$OUT"

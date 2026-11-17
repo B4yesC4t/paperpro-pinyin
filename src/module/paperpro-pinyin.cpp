@@ -57,114 +57,12 @@ static void logf(const char *fmt, ...) {
 #define PINYIN_VERSION "dev"
 #endif
 
-static const char *kBarQml = R"QML(
-import QtQuick
-// A zero-size anchor: a full-size item over xochitl's UI would be what its
-// own hit tests (childAt) find. Children are not clipped, and are tappable.
-Item {
-    id: root
-    x: 0; y: 0; z: 1000000
-    width: 0; height: 0
-    readonly property real areaW: parent ? parent.width : 0
-    readonly property real areaH: parent ? parent.height : 0
-    property var cands: []
-    property string preedit: ""
-    property bool chinese: true
-    property bool editing: false
-    property bool hasPrev: false
-    property bool hasNext: false
-    property rect cursor: Qt.rect(0, 0, 0, 0)
-    property real bottomMargin: 0   // the on-screen keyboard, when it is up
-    readonly property bool cursorOk: cursor.height > 0 && cursor.y >= 0 && cursor.y + cursor.height <= areaH
-                                     && cursor.x >= 0 && cursor.x <= areaW
-    // As on a computer: on the line below the text cursor, starting where it
-    // is; above the cursor when there is no room below.
-    function placeY(h) {
-        if (!cursorOk) return 24
-        var below = cursor.y + cursor.height + 10
-        if (below + h <= areaH - bottomMargin - 8) return below
-        return Math.max(8, cursor.y - h - 10)
-    }
-    function placeX(w) {
-        if (!cursorOk) return (areaW - w) / 2
-        return Math.max(8, Math.min(areaW - w - 8, cursor.x - 14))
-    }
+#include "bluetooth.h"
+#include "voice.h"
 
-    Rectangle {
-        id: bar
-        visible: root.preedit.length > 0
-        color: "white"; border.color: "black"; border.width: 2; radius: 8
-        width: Math.min(root.areaW - 16, content.implicitWidth + 24)
-        height: content.implicitHeight + 16
-        x: root.placeX(width)
-        y: root.placeY(height)
-        Column {
-            id: content
-            x: 12; y: 8
-            spacing: 2
-            Text { text: root.preedit; font.pixelSize: 24; color: "black"; leftPadding: 4 }
-            Row {
-                spacing: 4
-                Repeater {
-                    model: root.cands
-                    delegate: Rectangle {
-                        width: cell.implicitWidth + 16; height: 54; radius: 6
-                        color: index === 0 ? "black" : "white"
-                        Row {
-                            id: cell
-                            anchors.centerIn: parent
-                            spacing: 4
-                            Text {
-                                anchors.baseline: word.baseline
-                                text: index + 1; font.pixelSize: 22
-                                color: index === 0 ? "white" : "black"
-                            }
-                            Text {
-                                id: word
-                                text: modelData; font.pixelSize: 38
-                                color: index === 0 ? "white" : "black"
-                            }
-                        }
-                        TapHandler { onTapped: ime.pick(index) }
-                    }
-                }
-                Rectangle {
-                    visible: root.hasPrev || root.hasNext
-                    width: 44; height: 54; color: "white"
-                    Text { anchors.centerIn: parent; text: "‹"; font.pixelSize: 38; color: root.hasPrev ? "black" : "#bbbbbb" }
-                    TapHandler { onTapped: ime.page(-1) }
-                }
-                Rectangle {
-                    visible: root.hasPrev || root.hasNext
-                    width: 44; height: 54; color: "white"
-                    Text { anchors.centerIn: parent; text: "›"; font.pixelSize: 38; color: root.hasNext ? "black" : "#bbbbbb" }
-                    TapHandler { onTapped: ime.page(1) }
-                }
-            }
-        }
-    }
-
-    // 中/英, shown briefly by the cursor when it changes or typing starts.
-    property bool modeShown: false
-    function flash() { if (editing) { modeShown = true; modeTimer.restart() } else modeShown = false }
-    onChineseChanged: flash()
-    onEditingChanged: flash()
-    Timer { id: modeTimer; interval: 1500; onTriggered: root.modeShown = false }
-    Rectangle {
-        visible: root.modeShown && !bar.visible
-        width: 56; height: 46; radius: 6
-        color: root.chinese ? "black" : "white"; border.color: "black"; border.width: 2
-        x: root.placeX(width)
-        y: root.placeY(height)
-        Text {
-            anchors.centerIn: parent
-            text: root.chinese ? "中" : "英"
-            font.pixelSize: 28; color: root.chinese ? "white" : "black"
-        }
-        TapHandler { onTapped: ime.toggle() }
-    }
-}
-)QML";
+// The candidate bar, the editing toolbar and the settings page (overlay.qml,
+// turned into a string constant at build time).
+#include "overlay.qml.h"
 
 class PinyinIme : public QObject {
     Q_OBJECT
@@ -176,10 +74,25 @@ public:
         });
         if (m_debug) openControl();
         QTimer::singleShot(5000, this, [this] { launchRime(); });
+        m_bt = new Bluetooth(this);
+        m_voice = new Voice(this);
     }
 
     Q_INVOKABLE void pick(int i) { rime(QStringLiteral("pick %1").arg(i)); }
     Q_INVOKABLE void page(int d) { rime(QStringLiteral("page %1").arg(d > 0 ? 1 : 0)); }
+    // 设置页打开时输入法让开：按键照常交给设置页（Esc 关闭它）。
+    Q_INVOKABLE void settingsShown(bool open) {
+        m_settingsOpen = open;
+        if (open && !m_preedit.isEmpty()) rime(QStringLiteral("clear"));
+    }
+    void showSettings(bool open) {
+        if (m_bar) m_bar->setProperty("settingsOpen", open);
+    }
+    // 工具条上的「语音」。录音还没接上：先去设置页配好麦克风。
+    Q_INVOKABLE void voice() {
+        logf("voice: requested (mic %s)", qPrintable(m_bt->mic()));
+        showSettings(true);
+    }
     Q_INVOKABLE void toggle() {
         rime(QStringLiteral("ascii %1").arg(m_ascii ? 0 : 1));
         logf("mode: %s", m_ascii ? "English" : "Chinese");
@@ -249,6 +162,10 @@ private:
     //   grab             the focused window as /tmp/paperpro-pinyin-grab.png
     //   call <method>    a method of the focused item or an ancestor
     //   prop <name>      a property of the focused item or an ancestor
+    //   settings [off]   open / close the settings page
+    //   bt on|off|scan   Bluetooth, as the settings page does
+    //   voice test       the DeepSeek connection test
+    //   state            Bluetooth devices and test results
     void openControl() {
         QByteArray path = basePath("ctl").toLocal8Bit();
         unlink(path.constData());
@@ -337,6 +254,23 @@ private:
             } else {
                 logf("no bar");
             }
+        } else if (cmd == QLatin1String("settings") || cmd == QLatin1String("settings off")) {
+            showSettings(cmd == QLatin1String("settings"));
+        } else if (cmd == QLatin1String("bt on") || cmd == QLatin1String("bt off")) {
+            m_bt->setEnabled(cmd == QLatin1String("bt on"));
+        } else if (cmd == QLatin1String("bt scan")) {
+            m_bt->scan(!m_bt->scanning());
+        } else if (cmd == QLatin1String("voice test")) {
+            m_voice->testKey();
+        } else if (cmd == QLatin1String("state")) {
+            logf("bt %s scanning %d mic '%s' message '%s' devices %d; voice %s '%s'", qPrintable(m_bt->state()),
+                 m_bt->scanning(), qPrintable(m_bt->mic()), qPrintable(m_bt->message()), int(m_bt->devices().size()),
+                 qPrintable(m_voice->testState()), qPrintable(m_voice->testMessage()));
+            for (const QVariant &d : m_bt->devices()) {
+                QVariantMap m = d.toMap();
+                logf("  %s %s paired %d audio %d", qPrintable(m.value("address").toString()),
+                     qPrintable(m.value("name").toString()), m.value("paired").toBool(), m.value("audio").toBool());
+            }
         } else if (cmd == QLatin1String("grab")) {
             auto *w = qobject_cast<QQuickWindow *>(m_barWindow ? m_barWindow.data() : QGuiApplication::focusWindow());
             if (!w) { logf("grab: no window"); return; }
@@ -376,6 +310,13 @@ private:
     // ---- keys -------------------------------------------------------------------------
     bool key(QKeyEvent *k) {
         Qt::KeyboardModifiers mods = k->modifiers();
+        if (m_settingsOpen) {
+            if (k->type() == QEvent::KeyPress && k->key() == Qt::Key_Escape) {
+                showSettings(false);
+                return true;
+            }
+            return false;
+        }
         // A tap on Shift alone switches 中/英, as in common input methods.
         if (k->key() == Qt::Key_Shift) {
             if (k->type() == QEvent::KeyPress && !k->isAutoRepeat()) m_shiftAlone = true;
@@ -631,6 +572,8 @@ private:
                     }
                     auto *ctx = new QQmlContext(engine->rootContext(), this);
                     ctx->setContextProperty(QStringLiteral("ime"), this);
+                    ctx->setContextProperty(QStringLiteral("bt"), m_bt);
+                    ctx->setContextProperty(QStringLiteral("voice"), m_voice);
                     m_bar = qobject_cast<QQuickItem *>(comp->create(ctx));
                     if (!m_bar) {
                         logf("candidate bar: create failed: %s", qPrintable(comp->errorString()));
@@ -643,7 +586,7 @@ private:
                     updateBar();
                 };
                 connect(m_pending, &QQmlComponent::statusChanged, this, make);
-                m_pending->setData(kBarQml, QUrl(QStringLiteral("paperpro-pinyin:/bar.qml")));
+                m_pending->setData(kOverlayQml, QUrl(QStringLiteral("paperpro-pinyin:/overlay.qml")));
                 make();
             }
         }
@@ -672,7 +615,9 @@ private:
     bool m_ready = false;
     QElapsedTimer m_launched, m_retry;
     bool m_handled = false, m_ascii = false, m_prev = false, m_next = false;
-    bool m_committing = false, m_shiftAlone = false, m_editing = false;
+    bool m_committing = false, m_shiftAlone = false, m_editing = false, m_settingsOpen = false;
+    Bluetooth *m_bt = nullptr;
+    Voice *m_voice = nullptr;
     QString m_preedit;
     QStringList m_cands;
     QSet<int> m_swallowRelease;
@@ -788,3 +733,5 @@ extern "C" __attribute__((visibility("default"))) void paperpro_pinyin_late_star
 }
 
 #include "paperpro-pinyin.moc"
+#include "moc_bluetooth.cpp"
+#include "moc_voice.cpp"
