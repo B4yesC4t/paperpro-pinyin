@@ -7,8 +7,9 @@
 # 做的事：
 #   1. 把本目录复制到 /home/root/paperpro-pinyin（保留已学到的词：user/）
 #   2. 自检 Rime 引擎（输入 wojuede 应得到“我觉得”）
-#   3. 在系统分区写入三个小文件（/ 需临时改为可写）：
-#        xochitl.service.d/zz-paperpro-pinyin.conf   让 xochitl 加载输入法模块
+#   3. 在系统分区写入几个小文件（/ 需临时改为可写）：
+#        /usr/lib/libpaperpro-pinyin-loader.so        加载器：等加密的 /home 就绪后加载模块
+#        xochitl.service.d/zz-paperpro-pinyin.conf   让 xochitl 预加载这个加载器
 #        paperpro-pinyin-mirror.service / .timer       系统更新后把上述文件同步到新分区
 #   4. 重启 xochitl
 set -eu
@@ -16,6 +17,7 @@ DEST=/home/root/paperpro-pinyin
 SRC=$(cd "$(dirname "$0")" && pwd)
 UNITS=/usr/lib/systemd/system
 DROPIN=$UNITS/xochitl.service.d/zz-paperpro-pinyin.conf
+LOADER=/usr/lib/libpaperpro-pinyin-loader.so
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
 
@@ -27,7 +29,9 @@ die() { printf '安装失败：%s\n' "$*" >&2; exit 1; }
 [ "$(uname -m)" = aarch64 ] || die "只支持 reMarkable Paper Pro（aarch64），这台是 $(uname -m)"
 [ -x /usr/bin/xochitl ] || die "找不到 /usr/bin/xochitl"
 [ -e /usr/lib/libQt6Core.so.6 ] || die "系统里没有 Qt 6，固件版本可能太旧（需要 3.20 以上，已在 3.30 测试）"
-[ -f "$SRC/libpaperpro-pinyin.so" ] || die "安装包不完整：缺少 libpaperpro-pinyin.so"
+for f in libpaperpro-pinyin.so libpaperpro-pinyin-loader.so; do
+    [ -f "$SRC/$f" ] || die "安装包不完整：缺少 $f"
+done
 
 other=$(systemctl show xochitl -p Environment | tr ' ' '\n' | sed -n 's/^LD_PRELOAD=//p' | grep -v paperpro-pinyin || true)
 if [ -n "$other" ] && [ "$FORCE" = 0 ]; then
@@ -65,7 +69,9 @@ esac
 say "==> 写入系统文件"
 mount -o remount,rw /
 mkdir -p "$(dirname "$DROPIN")" "$UNITS/timers.target.wants"
-printf '[Service]\nEnvironment=LD_PRELOAD=%s/libpaperpro-pinyin.so\n' "$DEST" > "$DROPIN"
+# 先写到新文件再改名：正在运行的 xochitl 映射着旧的加载器。
+cp "$DEST/libpaperpro-pinyin-loader.so" "$LOADER.new" && mv "$LOADER.new" "$LOADER"
+printf '[Service]\nEnvironment=LD_PRELOAD=%s\n' "$LOADER" > "$DROPIN"
 cat > "$UNITS/paperpro-pinyin-mirror.service" <<EOF
 [Unit]
 Description=PaperPro 拼音：系统更新后把配置同步到新系统分区

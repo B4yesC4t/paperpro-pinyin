@@ -72,7 +72,8 @@ sh paperpro-pinyin/install.sh --force
 | 位置 | 内容 |
 | --- | --- |
 | `/home/root/paperpro-pinyin/` | 输入法模块、Rime 引擎、词库、脚本；`user/` 为学到的词 |
-| `/usr/lib/systemd/system/xochitl.service.d/zz-paperpro-pinyin.conf` | 让 xochitl 启动时加载输入法模块 |
+| `/usr/lib/libpaperpro-pinyin-loader.so` | 加载器（约 70 KB）：等加密的 `/home` 就绪后加载输入法模块 |
+| `/usr/lib/systemd/system/xochitl.service.d/zz-paperpro-pinyin.conf` | 让 xochitl 启动时预加载上面的加载器 |
 | `/usr/lib/systemd/system/paperpro-pinyin-mirror.{service,timer}` | 每 10 分钟检查一次：系统更新安装完成后，把上面几个文件同步到新系统分区 |
 
 系统分区平时是只读的，安装和卸载时会临时改为可写，写完立即恢复。

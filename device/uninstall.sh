@@ -7,7 +7,8 @@ set -u
 DEST=/home/root/paperpro-pinyin
 UNITS=/usr/lib/systemd/system
 
-FILES="$UNITS/xochitl.service.d/zz-paperpro-pinyin.conf
+FILES="/usr/lib/libpaperpro-pinyin-loader.so
+$UNITS/xochitl.service.d/zz-paperpro-pinyin.conf
 $UNITS/paperpro-pinyin-mirror.service
 $UNITS/paperpro-pinyin-mirror.timer
 $UNITS/timers.target.wants/paperpro-pinyin-mirror.timer"

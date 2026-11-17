@@ -17,8 +17,16 @@ PaperPro 拼音由两部分组成：
 ## 1. 接入 xochitl：LD_PRELOAD + 事件过滤器
 
 xochitl 是 Qt 6 / QML 程序。systemd 配置片段 `zz-paperpro-pinyin.conf` 为它设置
-`LD_PRELOAD`，让它启动时加载 `libpaperpro-pinyin.so`。模块通过
-`Q_COREAPP_STARTUP_FUNCTION` 在应用对象创建时运行，安装一个**应用级事件过滤器**：
+`LD_PRELOAD`，预加载系统分区里的加载器 `/usr/lib/libpaperpro-pinyin-loader.so`，
+再由加载器打开 `/home/root/paperpro-pinyin/libpaperpro-pinyin.so`。
+
+多这一层，是因为 `/home` 是加密分区：开机时 reMarkable 有意让 xochitl 先启动，
+`/home` 在约一秒后才解锁挂载（xochitl 在进程内等待它）。直接预加载 `/home` 里的模块
+就要碰运气，系统更新后的首次开机尤其容易落空。加载器只依赖 C 运行库：`/home`
+已就绪时立即加载模块；还没就绪时开一个线程等待，模块文件出现后再加载，并请模块
+在主线程补上启动。系统的启动顺序不受影响。
+
+模块通过 `Q_COREAPP_STARTUP_FUNCTION`（或上述补启动）在应用对象创建时运行，安装一个**应用级事件过滤器**：
 
 - **Type Folio**：硬件按键先到达窗口。有输入焦点且处于中文模式时，字母交给 Rime，事件本身被吞掉，不会打出英文。
 - **屏幕键盘**：xochitl 的屏幕键盘以 `QInputMethodEvent` 把单个字母“提交”给编辑器，模块在半路截下，同样交给 Rime。

@@ -27,6 +27,7 @@ make package    # 打包为 dist/paperpro-pinyin.tar.gz 及 .sha256
 
 ```
 src/module/paperpro-pinyin.cpp   注入 xochitl 的 Qt 模块：事件过滤、候选栏、光标定位、键盘布局
+src/loader/paperpro-pinyin-loader.c  预加载的加载器：等 /home 就绪后打开模块
 src/helper/pinyin-rime.c         librime 的按行协议包装（子进程）
 device/install.sh                在平板上安装
 device/uninstall.sh              在平板上卸载

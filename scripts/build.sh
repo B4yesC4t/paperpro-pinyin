@@ -10,6 +10,7 @@
 #
 # 产物：
 #   libpaperpro-pinyin.so       注入 xochitl 的输入法模块（Qt 6.10）
+#   libpaperpro-pinyin-loader.so  加载器：装在系统分区，等 /home 就绪后加载模块
 #   rime/pinyin-rime            Rime 引擎的命令行助手
 #   rime/lib, rime/plugins      librime 及其依赖、librime-lua
 #   rime/shared                 雾凇拼音方案与预编译词库
@@ -56,6 +57,12 @@ g++ -std=c++17 -O2 -fPIC -shared -fvisibility=hidden -Wall -Wextra -Wno-unused-p
     /w/src/module/paperpro-pinyin.cpp -o $OUT/libpaperpro-pinyin.so \
     -L$Q/lib -lQt6Quick -lQt6Qml -lQt6Gui -lQt6Core -Wl,--as-needed -Wl,-z,defs
 strip --strip-unneeded $OUT/libpaperpro-pinyin.so
+
+echo "==> 编译加载器"
+# 带上与模块相同的 Qt 库（--no-as-needed），使加载器在 Qt 初始化之后才运行。
+gcc -O2 -fPIC -shared -Wall -Wextra /w/src/loader/paperpro-pinyin-loader.c -o $OUT/libpaperpro-pinyin-loader.so \
+    -L$Q/lib -Wl,--no-as-needed -lQt6Quick -lQt6Qml -lQt6Gui -lQt6Core -Wl,--as-needed -ldl -lpthread
+strip --strip-unneeded $OUT/libpaperpro-pinyin-loader.so
 
 echo "==> 编译 Rime 助手"
 gcc -O2 -Wall -o $OUT/rime/pinyin-rime /w/src/helper/pinyin-rime.c -lrime -ldl

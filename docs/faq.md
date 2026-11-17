@@ -10,7 +10,7 @@
    ```
 
    应能看到 `loaded (version …)`。如果看到 `stood down`，说明本次开机内 xochitl 连续异常退出过，模块已自动停用，重启平板即可再次尝试；`disabled by …` 则表示存在 `disabled` 文件。
-3. 若什么都没有，检查配置是否存在：`systemctl cat xochitl | grep LD_PRELOAD`。不存在时重新运行 `install.sh`。
+3. 若什么都没有，检查配置是否存在：`systemctl cat xochitl | grep LD_PRELOAD`，应指向 `/usr/lib/libpaperpro-pinyin-loader.so`。不存在或指向别处时重新运行 `install.sh`。
 
 ### 屏幕键盘弹出来是空白的
 

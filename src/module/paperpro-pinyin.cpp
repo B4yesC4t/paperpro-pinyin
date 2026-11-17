@@ -24,9 +24,11 @@
 #include <QtQml>
 #include <QtQuick>
 
+#include <atomic>
 #include <cstdio>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <csignal>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -463,7 +465,9 @@ private:
         QProcess *p = m_proc;
         connect(p, &QProcess::finished, this, [this, p](int code, QProcess::ExitStatus st) {
             if (p != m_proc) return;
-            logf("rime exited (%s %d)", st == QProcess::CrashExit ? "crash" : "code", code);
+            // SIGTERM: systemd stopping xochitl's whole service, nothing wrong.
+            if (!(st == QProcess::CrashExit && code == SIGTERM))
+                logf("rime exited (%s %d)", st == QProcess::CrashExit ? "crash" : "code", code);
             rimeFailed();
         });
         m_launched.start();
@@ -742,9 +746,12 @@ static void aliasKeyboardLayout(const QString &to, const QString &from) {
          ok && QFile::exists(base + to + QStringLiteral("/keyboard_layout.json")) ? "ok" : "failed");
 }
 
-// Runs as the QCoreApplication is constructed (the library is preloaded, so
-// this is registered before main runs).
+// Runs as the QCoreApplication is constructed (the loader opens this library
+// before main runs), or, when /home came up after xochitl had started, through
+// paperpro_pinyin_late_start below. Either way it runs once.
 static void start() {
+    static std::atomic<bool> started{false};
+    if (started.exchange(true)) return;
     if (!QCoreApplication::applicationFilePath().endsWith(QLatin1String("/xochitl"))) return;
     if (QFile::exists(basePath("disabled"))) {
         logf("disabled by %s", qPrintable(basePath("disabled")));
@@ -770,5 +777,14 @@ static void start() {
     });
 }
 Q_COREAPP_STARTUP_FUNCTION(start)
+
+// Called by the loader (on its own thread) after it opened this library late.
+// If the application object already existed by then, Qt has either run start()
+// right away or missed it; in both cases it is run (again: a no-op) on the main
+// thread. Before the application exists, Qt will run it as it is constructed.
+extern "C" __attribute__((visibility("default"))) void paperpro_pinyin_late_start() {
+    if (QCoreApplication *app = QCoreApplication::instance())
+        QMetaObject::invokeMethod(app, [] { start(); }, Qt::QueuedConnection);
+}
 
 #include "paperpro-pinyin.moc"
