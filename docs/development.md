@@ -28,13 +28,14 @@ make package    # 打包为 dist/paperpro-pinyin.tar.gz 及 .sha256
 ```
 src/module/paperpro-pinyin.cpp   注入 xochitl 的 Qt 模块：事件过滤、候选栏、光标定位、键盘布局与按键
 src/module/overlay.qml           候选栏、语音状态、设置页（构建时编为字符串常量）
+src/module/keyboard.qml          输入法自己的屏幕键盘（盖在 xochitl 的键盘上）
 src/module/bluetooth.h           蓝牙：通过 D-Bus 控制 bluetoothd（开关、搜索、配对）
 src/module/voice.h               语音输入：录音子进程、DeepSeek 识别与 Flash 整理
 src/loader/paperpro-pinyin-loader.c  预加载的加载器：等 /home 就绪后打开模块
 src/helper/pinyin-rime.c         librime 的按行协议包装（子进程）
 src/helper/voice-hfp.c           蓝牙免提麦克风录音：用户态 RFCOMM + HFP 音频网关 + SCO
 device/bluetooth-up.sh           载入蓝牙驱动、启动 bluetoothd
-assets/paperpro-pinyin-icons.ttf 屏幕键盘图标（Material Icons 子集）
+assets/paperpro-pinyin-icons.otf 屏幕键盘图标（Material Icons 子集）
 device/install.sh                在平板上安装
 device/uninstall.sh              在平板上卸载
 device/mirror-root.sh            系统更新后同步配置到新分区
@@ -73,6 +74,10 @@ cat out/paperpro-pinyin/libpaperpro-pinyin.so | ssh root@10.11.99.1 \
 | `echo "type wo" > ctl` | 像键盘输入一样把字母交给引擎 |
 | `echo "key 65307" > ctl` | 发送一个 keysym（例：Esc） |
 | `echo 'commit 第一行\n第二行' > ctl` | 把文字直接插入光标处（`\n` 为换行），像语音结果上屏一样 |
+| `echo kbtest > ctl` | 打开设置页并聚焦一个编辑框，不用笔记本就能调出屏幕键盘 |
+| `echo "kbset symbols true" > ctl` | 改屏幕键盘的状态（`symbols`、`shift`、`chinese`……）以便截图 |
+| `echo 'kbtap {"k":"letter","c":"n"}' > ctl` | 像点了屏幕键盘上的这个键一样 |
+| 安装目录下的 `layout-test.json` | 调试模式下，替换系统键盘的 `zh_CN` 布局（试布局不用重新编译） |
 | `echo dump > ctl` | 记录焦点对象、光标、图层结构与候选栏状态 |
 | `echo grab > ctl` | 把当前界面截图保存为 `/tmp/paperpro-pinyin-grab.png` |
 | `echo "prop keyboardVisibility" > ctl` | 读取焦点对象（或其上层）的属性 |

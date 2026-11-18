@@ -71,7 +71,7 @@ static const QString kKeyLang = QStringLiteral("中/英");
 // The icon font, and Qt told to fall back to it for these code points (they
 // are in no other font on the tablet).
 static void registerIconFont() {
-    int id = QFontDatabase::addApplicationFont(basePath("paperpro-pinyin-icons.ttf"));
+    int id = QFontDatabase::addApplicationFont(basePath("paperpro-pinyin-icons.otf"));
     QStringList families = id >= 0 ? QFontDatabase::applicationFontFamilies(id) : QStringList();
     for (const QString &f : families)
         for (QChar::Script sc : {QChar::Script_Common, QChar::Script_Unknown})
@@ -82,6 +82,8 @@ static void registerIconFont() {
 // The candidate bar, the editing toolbar and the settings page (overlay.qml,
 // turned into a string constant at build time).
 #include "overlay.qml.h"
+// The on-screen keyboard drawn over xochitl's own (keyboard.qml).
+#include "keyboard.qml.h"
 
 class PinyinIme : public QObject {
     Q_OBJECT
@@ -141,6 +143,63 @@ public:
             }
             commit(t);
         });
+    }
+
+    // ---- our on-screen keyboard (keyboard.qml) ------------------------------------------
+    // Its keys reach the editor the way xochitl's keyboard's do: a commit that
+    // the input method may take, a deletion, a newline.
+    Q_INVOKABLE void oskType(const QString &t) {
+        QObject *fo = QGuiApplication::focusObject();
+        if (!fo || t.isEmpty()) return;
+        QInputMethodEvent ev;
+        ev.setCommitString(t);
+        QCoreApplication::sendEvent(fo, &ev);
+    }
+    // Straight into the text (symbols, capitals): what is being typed goes in first.
+    Q_INVOKABLE void oskRaw(const QString &t) {
+        if (!m_preedit.isEmpty()) rime(QStringLiteral("pick 0"));
+        commit(t);
+    }
+    Q_INVOKABLE void oskBackspace() {
+        QObject *fo = QGuiApplication::focusObject();
+        if (!fo) return;
+        QInputMethodEvent ev;
+        ev.setCommitString(QString(), -1, 1);
+        QCoreApplication::sendEvent(fo, &ev);
+    }
+    Q_INVOKABLE void oskEnter() { oskType(QStringLiteral("\n")); }
+    Q_INVOKABLE void oskKey(int key) {
+        QObject *fo = QGuiApplication::focusObject();
+        if (!fo) return;
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier), release(QEvent::KeyRelease, key, Qt::NoModifier);
+        QCoreApplication::sendEvent(fo, &press);
+        QCoreApplication::sendEvent(fo, &release);
+    }
+    // Holding the space bar talks, as on Type Folio.
+    Q_INVOKABLE void oskVoice(bool down) {
+        if (down) {
+            if (!voiceReady()) {
+                showSettings(true);
+                return;
+            }
+            m_oskVoice = true;
+            if (!m_preedit.isEmpty()) rime(QStringLiteral("pick 0"));
+            if (m_bar) m_bar->setProperty("voiceHint", QStringLiteral("松开空格结束"));
+            m_voice->start(m_bt->mic());
+            if (m_bar && m_voice->state() == QLatin1String("connecting")) m_bar->setProperty("voiceWanted", true);
+        } else if (m_oskVoice) {
+            m_oskVoice = false;
+            m_voice->stop();
+        }
+    }
+    Q_INVOKABLE void openSettings() { showSettings(true); }
+    Q_INVOKABLE void hideKeyboard() {
+        for (QQuickItem *a = qobject_cast<QQuickItem *>(QGuiApplication::focusObject()); a; a = a->parentItem())
+            if (a->metaObject()->indexOfMethod("hideVirtualKeyboard()") >= 0) {
+                QMetaObject::invokeMethod(a, "hideVirtualKeyboard");
+                return;
+            }
+        QGuiApplication::inputMethod()->hide();
     }
 
     Q_INVOKABLE void pick(int i) { rime(QStringLiteral("pick %1").arg(i)); }
@@ -283,7 +342,26 @@ private:
     }
 
     void control(const QString &cmd) {
-        if (cmd.startsWith(QLatin1String("commit "))) {
+        if (cmd == QLatin1String("kbtest")) {
+            // Open the settings page and focus its first edit box: brings up the
+            // on-screen keyboard without a notebook.
+            showSettings(true);
+            QTimer::singleShot(800, this, [this] {
+                if (m_bar) QMetaObject::invokeMethod(m_bar, "debugFocusEdit");
+            });
+        } else if (cmd.startsWith(QLatin1String("kbset ")) && m_kb) {
+            // kbset <property> <value>：改我们键盘的状态（symbols true、shift 2……）来截图
+            QString name = cmd.section(QLatin1Char(' '), 1, 1), v = cmd.section(QLatin1Char(' '), 2);
+            QVariant val = v == QLatin1String("true") ? QVariant(true) : v == QLatin1String("false") ? QVariant(false) : QVariant(v);
+            bool num = false;
+            int n = v.toInt(&num);
+            if (num) val = n;
+            m_kb->setProperty(name.toLatin1(), val);
+        } else if (cmd.startsWith(QLatin1String("kbtap ")) && m_kb) {
+            // kbtap {"k":"letter","c":"n"}：像点了这个键一样
+            QVariant spec = QJsonDocument::fromJson(cmd.mid(6).toUtf8()).toVariant();
+            QMetaObject::invokeMethod(m_kb, "tap", Q_ARG(QVariant, spec));
+        } else if (cmd.startsWith(QLatin1String("commit "))) {
             // commit <text>：直接上屏，\\n 表示换行（用来试语音整理后的多行结果）。
             commit(cmd.mid(7).replace(QLatin1String("\\n"), QLatin1String("\n")));
         } else if (cmd.startsWith(QLatin1String("type "))) {
@@ -918,10 +996,10 @@ private:
 
     void updateBar() { pushBar(); }
 
-    QByteArray overlayQml() const {
-        if (!m_plainOverlay) return QByteArray(kOverlayQml);
+    QByteArray overlayQml(const char *src = kOverlayQml) const {
+        if (!m_plainOverlay) return QByteArray(src);
         QList<QByteArray> out;
-        for (const QByteArray &l : QByteArray(kOverlayQml).split('\n')) {
+        for (const QByteArray &l : QByteArray(src).split('\n')) {
             if (l.contains("// FAST-REGION")) {
                 if (l.contains("component FastRegion")) out << "    component FastRegion: Item { property int mode }";
                 continue;
@@ -985,6 +1063,12 @@ private:
                 make();
             }
         }
+        attachKeyboard();
+        if (m_kb) {
+            m_kb->setProperty("chinese", !m_ascii);
+            m_kb->setProperty("latin", latinOnly(fo));
+            m_kb->setProperty("composing", !m_preedit.isEmpty());
+        }
         if (!m_bar) return;
         QRectF cursor;
         qreal margin = 0;
@@ -1005,7 +1089,59 @@ private:
         m_bar->setProperty("hasNext", m_next);
     }
 
+    // Our keyboard goes over xochitl's (the C++ item VirtualKeyboard, which
+    // draws all its keys itself), as its sibling: same place, same window,
+    // shown and hidden with it.
+    static QQuickItem *findItem(QQuickItem *it, const char *cls) {
+        if (!qstrcmp(it->metaObject()->className(), cls)) return it;
+        for (QQuickItem *c : it->childItems())
+            if (QQuickItem *f = findItem(c, cls)) return f;
+        return nullptr;
+    }
+    void attachKeyboard() {
+        if ((m_kb && m_kbFor) || m_kbPending || m_noKeyboard) return;
+        QQuickItem *vk = nullptr;
+        for (QWindow *w : QGuiApplication::topLevelWindows())
+            if (auto *qw = qobject_cast<QQuickWindow *>(w))
+                if ((vk = findItem(qw->contentItem(), "VirtualKeyboard"))) break;
+        if (!vk || !vk->parentItem()) return;
+        QQmlEngine *engine = qmlEngine(vk) ? qmlEngine(vk) : qmlEngine(vk->parentItem());
+        if (!engine) return;
+        m_kbPending = new QQmlComponent(engine, this);
+        QPointer<QQuickItem> target = vk;
+        auto make = [this, target, engine] {
+            QQmlComponent *comp = m_kbPending;
+            if (!comp || comp->isLoading()) return;
+            m_kbPending = nullptr;
+            comp->deleteLater();
+            if (!target || !comp->isReady()) {
+                logf("keyboard: %s", qPrintable(comp->errorString().trimmed()));
+                m_noKeyboard = true;   // xochitl's own keyboard stays
+                return;
+            }
+            auto *ctx = new QQmlContext(engine->rootContext(), this);
+            ctx->setContextProperty(QStringLiteral("ime"), this);
+            if (m_kb) m_kb->deleteLater();
+            m_kb = qobject_cast<QQuickItem *>(comp->createWithInitialProperties({{QStringLiteral("vk"), QVariant::fromValue<QObject *>(target.data())}}, ctx));
+            if (!m_kb) {
+                logf("keyboard: create failed: %s", qPrintable(comp->errorString().trimmed()));
+                m_noKeyboard = true;
+                return;
+            }
+            m_kb->setParentItem(target->parentItem());
+            m_kbFor = target;
+            logf("keyboard: drawn over %s", target->parentItem()->metaObject()->className());
+            pushBar();
+        };
+        connect(m_kbPending, &QQmlComponent::statusChanged, this, make);
+        m_kbPending->setData(overlayQml(kKeyboardQml), QUrl(QStringLiteral("paperpro-pinyin:/keyboard.qml")));
+        make();
+    }
+
     const bool m_debug = QFile::exists(basePath("debug"));
+    QPointer<QQuickItem> m_kb, m_kbFor;
+    QPointer<QQmlComponent> m_kbPending;
+    bool m_noKeyboard = false;
     QProcess *m_proc = nullptr;
     bool m_ready = false;
     QElapsedTimer m_launched, m_retry;
@@ -1039,11 +1175,29 @@ static void putBE(QByteArray &b, quint32 v, int bytes) {
     for (int i = bytes - 1; i >= 0; i--) b.append(char((v >> (8 * i)) & 0xff));
 }
 
-// The Chinese keyboard's bottom row: 🌐 123 ⚙ 🎤 ， 空格 。 中/英 回车
+// The Chinese keyboard: a number row above the letters, and the bottom row
+// 🌐 123 ⚙ 🎤 ， 空格 。 中/英 回车.
 static QByteArray withImeKeys(const QByteArray &json) {
     QJsonDocument d = QJsonDocument::fromJson(json);
     if (!d.isObject()) return json;
     QJsonObject o = d.object();
+    // 1–0 pick a candidate while typing pinyin (as on Type Folio) and are digits
+    // otherwise; long-press or Shift gives the symbol above it on a US keyboard.
+    // The symbols go to Rime like typed ones, so in Chinese they come out as
+    // Chinese punctuation (！ ¥ …… （ ）).
+    QJsonArray alpha = o.value(QLatin1String("alphabetic")).toArray();
+    if (!alpha.isEmpty() && alpha.at(0).toArray().at(0).toObject().value(QLatin1String("default")).toArray().at(0) !=
+                                QJsonValue(QStringLiteral("1"))) {
+        const char *digits = "1234567890", *symbols = "!@#$%^&*()";
+        QJsonArray numbers;
+        for (int i = 0; i < 10; i++) {
+            QString n(QChar(digits[i])), s(QChar(symbols[i]));
+            numbers.append(QJsonObject{{QStringLiteral("default"), QJsonArray{n, s}},
+                                       {QStringLiteral("shifted"), QJsonArray{s, n}}});
+        }
+        alpha.prepend(numbers);
+        o.insert(QStringLiteral("alphabetic"), alpha);
+    }
     QJsonArray row = o.value(QLatin1String("spacebarRow")).toArray();
     int at = 0;
     for (int i = 0; i < row.size(); i++)
@@ -1082,7 +1236,15 @@ static void aliasKeyboardLayout(const QString &to, const QString &from) {
         QFile in(base + from + QLatin1Char('/') + f);
         if (!in.open(QIODevice::ReadOnly)) return;
         QByteArray content = in.readAll();
-        if (f == QLatin1String("keyboard_layout.json")) content = withImeKeys(content);
+        if (f == QLatin1String("keyboard_layout.json")) {
+            content = withImeKeys(content);
+            // Debug: try a layout from a file without rebuilding.
+            QFile test(basePath("layout-test.json"));
+            if (QFile::exists(basePath("debug")) && test.open(QIODevice::ReadOnly)) {
+                content = test.readAll();
+                logf("keyboard: using layout-test.json (%lld bytes)", (long long)content.size());
+            }
+        }
         nodes.append({f, false, 0, 0, content});
     }
     QByteArray tree, data, names;

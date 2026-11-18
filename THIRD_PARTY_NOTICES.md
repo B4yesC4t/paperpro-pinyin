@@ -10,7 +10,7 @@ PaperPro 拼音本身以 [GPL-3.0](LICENSE) 发布。发布包里还带有以下
 | [雾凇拼音 rime-ice](https://github.com/iDvel/rime-ice) | 拼音方案与词库 | GPL-3.0 | GitHub 发布标签 |
 | [OpenCC](https://github.com/BYVoid/OpenCC) | 简繁转换 | Apache-2.0 | Debian trixie |
 | Boost、glog、gflags、yaml-cpp、LevelDB、marisa-trie、Lua 等 | librime 的依赖库 | 各自许可证（见 `licenses/`） | Debian trixie |
-| [Material Icons](https://github.com/google/material-design-icons)（子集：settings、mic） | 屏幕键盘上的设置与麦克风图标 | Apache-2.0 | Google 官方仓库，`paperpro-pinyin-icons.ttf` |
+| [Material Icons](https://github.com/google/material-design-icons)（Outlined 子集：settings、mic、backspace、keyboard_return、keyboard_tab、keyboard_hide、keyboard_capslock、arrow_upward、chevron_left、chevron_right） | 屏幕键盘的图标 | Apache-2.0 | Google 官方仓库，`paperpro-pinyin-icons.otf` |
 
 输入法模块在运行时动态链接平板系统自带的 Qt 6（LGPL-3.0），本项目不分发 Qt。
 

@@ -57,6 +57,7 @@ done
 $Q/libexec/moc -I$Q/include -I$Q/include/QtCore $M/paperpro-pinyin.cpp -o /tmp/b/paperpro-pinyin.moc
 # overlay.qml 作为字符串常量编进模块。
 { printf "static const char kOverlayQml[] = R\"QML("; cat $M/overlay.qml; printf ")QML\";\n"; } > /tmp/b/overlay.qml.h
+{ printf "static const char kKeyboardQml[] = R\"QML("; cat $M/keyboard.qml; printf ")QML\";\n"; } > /tmp/b/keyboard.qml.h
 g++ -std=c++17 -O2 -fPIC -shared -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter -I/tmp/b -I$M \
     -DPINYIN_VERSION="\"$VERSION\"" \
     -I$Q/include -I$Q/include/QtCore -I$Q/include/QtGui -I$Q/include/QtQml -I$Q/include/QtQuick \
@@ -85,6 +86,9 @@ git -c advice.detachedHead=false clone -q --depth 1 --branch "$RIME_ICE_REV" htt
 cp -R /tmp/ice/* $OUT/rime/shared/
 cp /tmp/ice/LICENSE $OUT/licenses/rime-ice.LICENSE
 rm -rf $OUT/rime/shared/others $OUT/rime/shared/.github $OUT/rime/shared/*.md $OUT/rime/shared/LICENSE
+# 每页 8 个候选（雾凇默认 5 个）；数字键 1–8 选字。
+sed -i "s/^  page_size: 5 .*/  page_size: 8  # 候选词个数（PaperPro 拼音）/" $OUT/rime/shared/default.yaml
+grep -q "^  page_size: 8 " $OUT/rime/shared/default.yaml || { echo "default.yaml 里找不到 page_size"; exit 1; }
 # 在这里编译方案和词库：平板的 CPU 上要好几分钟。
 mkdir -p /tmp/user
 (cd $OUT/rime/shared && rime_deployer --build /tmp/user $OUT/rime/shared $OUT/rime/shared/build) \
@@ -116,7 +120,7 @@ chown -R "$HOST_UID:$HOST_GID" /w/out /w/.cache
 cp device/install.sh device/uninstall.sh device/mirror-root.sh device/bluetooth-up.sh "$OUT/"
 chmod +x "$OUT"/*.sh
 cp LICENSE THIRD_PARTY_NOTICES.md VERSION "$OUT/"
-cp assets/paperpro-pinyin-icons.ttf "$OUT/"
+cp assets/paperpro-pinyin-icons.otf "$OUT/"
 cp assets/MaterialIcons.LICENSE "$OUT/licenses/material-icons.LICENSE"
 du -sh "$OUT"
 echo "构建完成：$OUT"

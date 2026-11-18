@@ -56,8 +56,15 @@ Item {
             x: 12; y: 8
             spacing: 2
             Text { text: root.preedit; font.pixelSize: 24; color: "black"; leftPadding: 4 }
+            // 8 个候选放不下时（长词句、窄屏）整行缩小，而不是伸出屏幕。
+            Item {
+                width: candRow.implicitWidth * candRow.scale
+                height: candRow.implicitHeight * candRow.scale
             Row {
+                id: candRow
                 spacing: 4
+                transformOrigin: Item.TopLeft
+                scale: Math.min(1, (root.areaW - 16 - 24) / Math.max(1, implicitWidth))
                 Repeater {
                     model: root.cands
                     delegate: Rectangle {
@@ -93,6 +100,7 @@ Item {
                     Text { anchors.centerIn: parent; text: "›"; font.pixelSize: 38; color: root.hasNext ? "black" : "#bbbbbb" }
                     TapHandler { onTapped: ime.page(1) }
                 }
+            }
             }
         }
     }
@@ -139,6 +147,7 @@ Item {
 
     // 中/英, shown briefly by the cursor when it changes or typing starts.
     property bool modeShown: false
+    function debugFocusEdit() { hotwordEdit.focusEdit() }   // 调试：kbtest
     function flash() { if (editing) { modeShown = true; modeTimer.restart() } else modeShown = false }
     onChineseChanged: flash()
     onEditingChanged: flash()
@@ -236,11 +245,12 @@ Item {
                 }
             }
         }
+        function focusEdit() { edit.forceActiveFocus(); edit.cursorPosition = edit.length; Qt.inputMethod.show() }
         Timer { id: saveTimer; interval: 1000; onTriggered: eb.save(edit.text) }
         MouseArea {
             anchors.fill: parent
             enabled: !edit.activeFocus
-            onClicked: { edit.forceActiveFocus(); edit.cursorPosition = edit.length; Qt.inputMethod.show() }
+            onClicked: eb.focusEdit()
         }
     }
     component Note: Text {
