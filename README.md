@@ -35,7 +35,7 @@
 | reMarkable Paper Pro | 3.30.0.108 | ✅ 已测试 |
 | reMarkable Paper Pro | 3.30.0.111 | ⚠️ 可用，但候选栏刷新明显变慢（[说明](docs/faq.md#系统更新到-3300111-后候选栏一顿一顿)） |
 | reMarkable Paper Pro | 其他 3.2x / 3.3x | 理论可用（未测试） |
-| reMarkable Paper Pro Move | — | 未测试 |
+| reMarkable Paper Pro Move | 3.29.0.149 | ✅ 已测试（屏幕键盘为 10 列的小屏布局） |
 | reMarkable 1 / 2 | — | ❌ 不支持（处理器架构与系统不同） |
 
 > 输入法只依赖 Qt 的公开接口，并在运行时按名称查找界面对象；固件更新若改动了这些部分，最坏情况是候选栏位置退回屏幕顶部，或模块自动停用，不会影响系统本身。
@@ -78,7 +78,7 @@ cd /home/root && tar xzf paperpro-pinyin.tar.gz && sh paperpro-pinyin/install.sh
 ### 屏幕键盘
 
 输入法自带一套为墨水屏设计的中文屏幕键盘，替换系统键盘出现在原来的位置：白底、黑框按键，
-功能键浅灰，回车实心黑；每行 14 列、左右排满，字母行像实体键盘那样错开。
+功能键浅灰，回车实心黑。Paper Pro 上每行 14 列、左右排满，字母行像实体键盘那样错开：
 
 ```
  ～  1  2  3  4  5  6  7  8  9  0  ——  （  ）
@@ -87,6 +87,18 @@ cd /home/root && tar xzf paperpro-pinyin.tar.gz && sh paperpro-pinyin/install.sh
  ⇧      z  x  c  v  b  n  m  ，  。  ？   ⇧
  符号  ⚙  🎤  [      空格      ]  ‹  ›  收起
 ```
+
+Paper Pro Move 的屏幕窄（954 像素），改用手机式的 10 列；字号、间距、圆角按键的大小缩放：
+
+```
+ 1  2  3  4  5  6  7  8  9  0
+ q  w  e  r  t  y  u  i  o  p
+   a  s  d  f  g  h  j  k  l
+ ⇧    z  x  c  v  b  n  m    ⌫
+ 符号 中/英 ⚙ 🎤 ，[  空格  ] ↵
+```
+
+小屏上逗号键长按是句号；符号页底行有 ⚙、🎤 和收起键盘。
 
 - 点字母打拼音，点候选或按数字上屏；**长按空格**说话，**🎤** 点一下开始、再点一下结束
 - 数字键右上角是它的符号，**长按**或先按 **Shift** 打出（中文模式下是 ！ @ # ¥ % …… & * （ ））

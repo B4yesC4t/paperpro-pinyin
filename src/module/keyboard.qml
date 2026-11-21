@@ -33,10 +33,15 @@ Rectangle {
     // ---- 外观 ----------------------------------------------------------------------
     // 参照 iPad Pro 13 寸与 Gboard 平板键盘：每行 14 列、左右都排满，字母行像实体键盘那样错开；
     // 数字行矮一些。墨水屏上只用黑、白和一种浅灰：字母键白底黑框，功能键浅灰，回车实心黑。
-    readonly property int cols: 14
-    readonly property real padX: 8
-    readonly property real padY: 8
-    readonly property real gap: 10
+    // 窄屏（Paper Pro Move 竖放，954 像素宽）改用手机式的 10 列；字号、间距、圆角都按键的
+    // 大小缩放，以 Paper Pro 竖放为 1。
+    readonly property bool compact: width < 1300
+    readonly property int cols: compact ? 10 : 14
+    readonly property real k: Math.min(1.15, ((width - 16 + 10) / cols) / 115.3,
+                                       ((height - 16 + 10) / 4.78) / 128.7)
+    readonly property real padX: Math.round(8 * k)
+    readonly property real padY: Math.round(8 * k)
+    readonly property real gap: Math.round(10 * k)
     readonly property real unit: (width - 2 * padX + gap) / cols
     readonly property real numberRowScale: 0.78
     readonly property real rowUnit: (height - 2 * padY + gap) / (4 + numberRowScale)
@@ -49,14 +54,23 @@ Rectangle {
     readonly property var digitsZh: ["！", "@", "#", "¥", "%", "……", "&", "*", "（", "）"]
     readonly property var digitsEn: ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")"]
     function numberRow() {
-        var r = [{ c: zh ? "～" : "~", k: "raw" }], s = zh ? digitsZh : digitsEn
+        var r = compact ? [] : [{ c: zh ? "～" : "~", k: "raw" }], s = zh ? digitsZh : digitsEn
         for (var i = 0; i < 10; i++) r.push({ c: String((i + 1) % 10), s: s[i], k: "digit" })
+        if (compact) return r
         return r.concat([{ c: zh ? "——" : "-", k: "raw" }, { c: zh ? "（" : "(", k: "raw" }, { c: zh ? "）" : ")", k: "raw" }])
     }
     function letters(str) { return str.split("").map(function (ch) { return { c: ch, k: "letter" } }) }
     function punct(zhs, ens) { return { c: zh ? zhs : ens, k: "raw" } }
     readonly property var rows: symbols ? symbolRows() : letterRows()
     function letterRows() {
+        if (compact) return [
+            numberRow(),
+            letters("qwertyuiop"),
+            [{ k: "pad", w: 0.5 }].concat(letters("asdfghjkl"), [{ k: "pad", w: 0.5 }]),
+            [{ k: "shift", w: 1.5 }].concat(letters("zxcvbnm"), [{ k: "bs", w: 1.5 }]),
+            [{ k: "sym", w: 1.25 }, { k: "lang", w: 1.25 }, { k: "settings" }, { k: "mic" },
+             { c: zh ? "，" : ",", s: zh ? "。" : ".", k: "raw" }, { k: "space", w: 3 }, { k: "enter", w: 1.5 }]
+        ]
         return [
             numberRow(),
             [{ k: "tab", w: 1.5 }].concat(letters("qwertyuiop"), [{ k: "bs", w: 2.5 }]),
@@ -68,6 +82,17 @@ Rectangle {
     }
     function chars(str) { return str.split(" ").map(function (ch) { return { c: ch, k: "raw" } }) }
     function symbolRows() {
+        if (compact) {
+            var c = zh ? [chars("， 。 、 ？ ！ ； ： “ ” ……"), chars("（ ） 《 》 【 】 「 」 —— ～"),
+                          chars("@ # % & * + - /")]
+                       : [chars(", . ? ! ' \" : ; ( )"), chars("[ ] { } < > / \\ _ ~"),
+                          chars("@ # $ % & * - +")]
+            return [
+                numberRow(), c[0], c[1], c[2].concat([{ k: "bs", w: 2 }]),
+                [{ k: "sym", w: 1.25 }, { k: "lang", w: 1.25 }, { k: "settings" }, { k: "mic" },
+                 { k: "space", w: 2.5 }, { k: "hide", w: 1.25 }, { k: "enter", w: 1.75 }]
+            ]
+        }
         var r = zh ? [chars("， 。 、 ？ ！ ； ： “ ” ‘ ’"), chars("（ ） 《 》 【 】 「 」 『 』"),
                       chars("@ # % & * + = / \\ _ - …… ～ ·")]
                    : [chars(", . ? ! ' \" : ; [ ] {"), chars("} < > | ` ^ $ € £ ¥"),
@@ -100,6 +125,7 @@ Rectangle {
         case "sym": return symbols ? (zh ? "拼音" : "ABC") : (zh ? "符号" : "123")
         case "space": return zh ? "空格" : "space"
         case "lang": return ""
+        case "pad": return ""
         case "letter": return upper() ? s.c.toUpperCase() : s.c
         case "digit": return shift > 0 ? s.s : s.c
         }
@@ -112,6 +138,7 @@ Rectangle {
 
     function tap(s) {
         switch (s.k) {
+        case "pad": return
         case "bs": ime.oskBackspace(); return
         case "enter": ime.oskEnter(); return
         case "tab": ime.oskKey(Qt.Key_Tab); return
@@ -168,8 +195,9 @@ Rectangle {
         property bool held: false
         width: (s.w || 1) * kb.unit - kb.gap
         height: rowHeight - kb.gap
-        radius: 12
-        border.width: s.k === "shift" && kb.shift === 1 ? 5 : 2
+        opacity: s.k === "pad" ? 0 : 1    // 半格缩进：占位、不画、不接触摸
+        radius: Math.round(12 * kb.k)
+        border.width: s.k === "shift" && kb.shift === 1 ? Math.max(3, Math.round(5 * kb.k)) : 2
         border.color: "black"
         color: dark ? "black" : (kb.isFunction(s) ? kb.grey : "white")
         Text {
@@ -178,28 +206,29 @@ Rectangle {
             text: kb.label(s)
             color: key.dark ? "white" : "black"
             font.family: kb.isIcon(s) ? kb.iconFont : kb.textFont
-            font.pixelSize: kb.isIcon(s) ? 42
-                          : (s.k === "letter" ? 46 : (s.k === "digit" ? 40 : (s.k === "sym" || s.k === "space" ? 28 : 40)))
+            font.pixelSize: Math.round(kb.k * (kb.isIcon(s) ? 42
+                          : (s.k === "letter" ? 46 : (s.k === "digit" ? 40 : (s.k === "sym" || s.k === "space" ? 28 : 40)))))
         }
         Text {   // 长按（或 Shift）打出的符号
-            visible: s.k === "digit" && kb.shift === 0
+            visible: s.s !== undefined && (s.k !== "digit" || kb.shift === 0)
             anchors.right: parent.right; anchors.top: parent.top
-            anchors.rightMargin: 10; anchors.topMargin: 4
+            anchors.rightMargin: Math.round(10 * kb.k); anchors.topMargin: Math.round(4 * kb.k)
             text: s.s || ""
             color: key.dark ? "white" : "black"
             font.family: kb.textFont
-            font.pixelSize: 20
+            font.pixelSize: Math.round(20 * kb.k)
         }
         Row {    // 中/英：当前的那个字黑、粗
             visible: s.k === "lang"
             anchors.centerIn: parent
             spacing: 2
-            Text { text: "中"; font.pixelSize: 34; font.bold: kb.zh; color: key.dark ? "white" : (kb.zh ? "black" : "#777777") }
-            Text { text: "/"; font.pixelSize: 30; color: key.dark ? "white" : "#777777" }
-            Text { text: "英"; font.pixelSize: 34; font.bold: !kb.zh; color: key.dark ? "white" : (!kb.zh ? "black" : "#777777") }
+            Text { text: "中"; font.pixelSize: Math.round(34 * kb.k); font.bold: kb.zh; color: key.dark ? "white" : (kb.zh ? "black" : "#777777") }
+            Text { text: "/"; font.pixelSize: Math.round(30 * kb.k); color: key.dark ? "white" : "#777777" }
+            Text { text: "英"; font.pixelSize: Math.round(34 * kb.k); font.bold: !kb.zh; color: key.dark ? "white" : (!kb.zh ? "black" : "#777777") }
         }
         TapHandler {
             id: th
+            enabled: key.s.k !== "pad"
             longPressThreshold: 0.4
             onTapped: kb.tap(key.s)
             onLongPressed: key.held = kb.longPress(key.s)

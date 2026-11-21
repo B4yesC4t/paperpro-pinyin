@@ -26,7 +26,7 @@ die() { printf '安装失败：%s\n' "$*" >&2; exit 1; }
 
 # ---- 检查 ----------------------------------------------------------------------
 [ "$(id -u)" = 0 ] || die "请以 root 运行"
-[ "$(uname -m)" = aarch64 ] || die "只支持 reMarkable Paper Pro（aarch64），这台是 $(uname -m)"
+[ "$(uname -m)" = aarch64 ] || die "只支持 reMarkable Paper Pro / Paper Pro Move（aarch64），这台是 $(uname -m)"
 [ -x /usr/bin/xochitl ] || die "找不到 /usr/bin/xochitl"
 [ -e /usr/lib/libQt6Core.so.6 ] || die "系统里没有 Qt 6，固件版本可能太旧（需要 3.20 以上，已在 3.30 测试）"
 for f in libpaperpro-pinyin.so libpaperpro-pinyin-loader.so; do

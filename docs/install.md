@@ -2,7 +2,7 @@
 
 ## 准备
 
-- 一台 reMarkable Paper Pro（已测试固件 3.30）
+- 一台 reMarkable Paper Pro（已测试固件 3.30）或 Paper Pro Move（已测试固件 3.29）
 - 一台电脑（macOS、Linux 或 Windows 10 及以上，都自带 `ssh` 与 `scp`）
 - 一根 USB-C 数据线
 
