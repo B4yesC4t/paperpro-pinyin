@@ -104,6 +104,17 @@ public:
             if (editable(QGuiApplication::focusObject()) != m_editing) focusChanged();
         });
         editingCheck->start(500);
+        // xochitl makes its keyboard only once it is asked to show it, a frame
+        // or so after the input method says it is visible (in a notebook: when
+        // the page is tapped with the text tool, which may be long after the
+        // focus came). So ours is attached on the redraws that follow, looked
+        // for during a few seconds only.
+        m_kbLook.setSingleShot(true);
+        connect(QGuiApplication::inputMethod(), &QInputMethod::visibleChanged, this, [this] {
+            if (!QGuiApplication::inputMethod()->isVisible() || (m_kb && m_kbFor) || m_noKeyboard) return;
+            m_kbLook.start(3000);
+            attachKeyboard();
+        });
         m_bt = new Bluetooth(this);
         m_voice = new Voice(this);
         m_oskHold.setSingleShot(true);
@@ -277,6 +288,10 @@ protected:
                      qPrintable(im->preeditString()), im->replacementStart(), im->replacementLength(),
                      o->metaObject()->className(), o == fo ? " (focus)" : "");
             }
+        }
+        if (e->type() == QEvent::UpdateRequest && m_kbLook.isActive() && o->isWindowType()) {
+            if (m_kb && m_kbFor) m_kbLook.stop();
+            else attachKeyboard();
         }
         switch (e->type()) {
         case QEvent::KeyPress:
@@ -635,6 +650,7 @@ private:
     }
 
     void keyboardPointer(QQuickItem *kb, QEvent *e) {
+        if (!(m_kb && m_kbFor)) attachKeyboard(); // missed it somehow: at the latest when it is touched
         bool down = e->type() == QEvent::TouchBegin || e->type() == QEvent::MouseButtonPress;
         QPointF pos;
         if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease) {
@@ -1142,6 +1158,7 @@ private:
     QPointer<QQuickItem> m_kb, m_kbFor;
     QPointer<QQmlComponent> m_kbPending;
     bool m_noKeyboard = false;
+    QTimer m_kbLook; // running: xochitl's keyboard is coming, attach ours to it
     QProcess *m_proc = nullptr;
     bool m_ready = false;
     QElapsedTimer m_launched, m_retry;
