@@ -68,8 +68,9 @@ Rectangle {
             letters("qwertyuiop"),
             [{ k: "pad", w: 0.5 }].concat(letters("asdfghjkl"), [{ k: "pad", w: 0.5 }]),
             [{ k: "shift", w: 1.5 }].concat(letters("zxcvbnm"), [{ k: "bs", w: 1.5 }]),
-            [{ k: "sym", w: 1.25 }, { k: "lang", w: 1.25 }, { k: "settings" }, { k: "mic" },
-             { c: zh ? "，" : ",", s: zh ? "。" : ".", k: "raw" }, { k: "space", w: 3 }, { k: "enter", w: 1.5 }]
+            [{ k: "sym" }, { k: "lang" }, { k: "settings" }, { k: "mic" },
+             { c: zh ? "，" : ",", s: zh ? "。" : ".", k: "raw" }, { k: "space", w: 2.75 }, { k: "hide" },
+             { k: "enter", w: 1.25 }]
         ]
         return [
             numberRow(),
